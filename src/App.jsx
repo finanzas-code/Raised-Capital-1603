@@ -4,64 +4,36 @@ import {
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CONFIGURACIÓN BASE
-// ─────────────────────────────────────────────────────────────────────────────
-const MORALIS_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImVjZGNjZDhiLTVmYjAtNDExMC1iZWUxLTY2ZGNhODQwZjE2MyIsIm9yZ0lkIjoiNDc4Njc3IiwidXNlcklkIjoiNDkyNDY4IiwidHlwZUlkIjoiZmQ5Zjk4ZTUtZTc1Yy00Mjk0LWJkZjYtMmZiZTg0NjgzZmZiIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3Njk4NjYwMTIsImV4cCI6NDkyNTYyNjAxMn0.StuCFBwn4_Wv32m2FeuCeuMzJPVVWlewCwE2VxnMzto';
-
+const MORALIS_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImVjZGNjZDhiLTVmYjAtNDExMC1iZWUxLTY2ZGNhODQwZjE2MyIsIm9yZ0lkIjoiNDc4Njc3IiwidXNlcklkIjoiNDkyNDY4IiwidHlwZUlkIjoiZmQ5Zjk4ZTUtZTc1Yy00Mjk0LWJkZjYtMmZiZTg0NjgzZmZiIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3Njk4NjYwMTIsImV4cCI6NDkyNTYyNjAxMn0.StuCFBwn4_Wv32m2FeuCeuMzJPVVWlewCwE2VxnMzto';
 const USDT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
 const EUR_USD = 1.1855;
 const ADMIN_PIN = '2024';
+const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTN35Qf_kApsWveC1A7blqmsYqTMbLqrbQk0rI7lgfKBtle3rWA6IcNc2VkFfqI106s_LO3zFne5Uga/pub?gid=0&single=true&output=csv';
+const LOGO_SRC = 'https://drive.google.com/file/d/1Nv5iDeb8nk44OeKr0jRwhy0I4NHYWCfy/view?usp=drive_link';
 
-const SHEET_CSV_URL =
-  'https://docs.google.com/spreadsheets/d/e/2PACX-1vTN35Qf_kApsWveC1A7blqmsYqTMbLqrbQk0rI7lgfKBtle3rWA6IcNc2VkFfqI106s_LO3zFne5Uga/pub?gid=0&single=true&output=csv';
-
-const LOGO_SRC = `https://drive.google.com/file/d/1Nv5iDeb8nk44OeKr0jRwhy0I4NHYWCfy/view?usp=drive_link`;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// JSONBIN — storage compartido para todos los usuarios
-// ─────────────────────────────────────────────────────────────────────────────
+// ── JSONbin shared storage ──
 const JSONBIN_BIN_ID  = '69b83cacb7ec241ddc73c5d7';
 const JSONBIN_API_KEY = '$2a$10$MqO48GfuzCCzj5YTst9dke12Rfn/8eGIbO4SK/zbXs/.zzp6O8Nkm';
 const JSONBIN_URL     = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
 
 async function loadSafesFromJSONBin() {
   try {
-    const res = await fetch(JSONBIN_URL + '/latest', {
-      headers: { 'X-Master-Key': JSONBIN_API_KEY },
-    });
+    const res = await fetch(JSONBIN_URL + '/latest', { headers: { 'X-Master-Key': JSONBIN_API_KEY } });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (Array.isArray(data.record) && data.record.length > 0) return data.record;
     return null;
-  } catch (e) {
-    console.error('[JSONBin] Error cargando:', e.message);
-    return null;
-  }
+  } catch (e) { console.error('[JSONBin] Error cargando:', e.message); return null; }
 }
 
 async function saveSafesToJSONBin(safes) {
   try {
-    const res = await fetch(JSONBIN_URL, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': JSONBIN_API_KEY,
-      },
-      body: JSON.stringify(safes),
-    });
+    const res = await fetch(JSONBIN_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Master-Key': JSONBIN_API_KEY }, body: JSON.stringify(safes) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return true;
-  } catch (e) {
-    console.error('[JSONBin] Error guardando:', e.message);
-    return false;
-  }
+  } catch (e) { console.error('[JSONBin] Error guardando:', e.message); return false; }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DEFAULTS Y PALETA
-// ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_SAFES = [
   { address: '0x7FB1e8a839B81C9Ae4CebAd6f259106d77eD83D2', name: 'CME-1' },
   { address: '0x17BF9A5bF74181AaB6CbB7EC80e16B7F1bFDF5a7', name: 'RET-2' },
@@ -70,11 +42,7 @@ const DEFAULT_SAFES = [
   { address: '0xba9759D878c0Ff656f1C1d9670F4736E162F61AF', name: 'LVT-2' },
 ];
 
-const COLOR_PALETTE = [
-  '#00d4aa','#818cf8','#fb923c','#f472b6','#34d399',
-  '#60a5fa','#fbbf24','#e879f9','#a3e635','#38bdf8',
-  '#f87171','#c084fc',
-];
+const COLOR_PALETTE = ['#00d4aa','#818cf8','#fb923c','#f472b6','#34d399','#60a5fa','#fbbf24','#e879f9','#a3e635','#38bdf8','#f87171','#c084fc'];
 
 const BUDGET_2026 = [
   { mes: 'Ene', label: 'Enero',      goal: 2500000 },
@@ -92,43 +60,25 @@ const BUDGET_2026 = [
 ];
 
 const FIAT_DATA_FALLBACK = {
-  'CME-1': {
-    totalEur: 1507997.51, totalUsd: 1779138.83, count: 284,
-    txs: [
-      { fecha: '2026-02-17', detalle: 'Duarte Abreu', importe: 42000.0 },
-      { fecha: '2026-02-17', detalle: 'Daniel Carcedo Blanco', importe: 15000.0 },
-      { fecha: '2026-02-17', detalle: 'Acevedo Diaz Gregorio Manuel', importe: 10000.0 },
-      { fecha: '2026-02-17', detalle: 'Elena Calvo Vazquez', importe: 7500.0 },
-      { fecha: '2026-02-17', detalle: 'Carrera Sanchez Manuel', importe: 5000.0 },
-      { fecha: '2026-02-17', detalle: 'Laura Garduno Sanchez', importe: 5000.0 },
-      { fecha: '2026-02-16', detalle: 'Inmaculada Perello Fonseca', importe: 5000.0 },
-      { fecha: '2026-02-16', detalle: 'Rosa Maria Vitaller Cebrian', importe: 1000.0 },
-    ],
-  },
-  'RET-2': {
-    totalEur: 281729.46, totalUsd: 334463.34, count: 85,
-    txs: [
-      { fecha: '2026-02-17', detalle: 'Perez Marti Angel Fernando', importe: 2500.0 },
-      { fecha: '2026-02-16', detalle: 'Hilario Echevarria Losada', importe: 7500.0 },
-      { fecha: '2026-02-13', detalle: 'Infillorca Capital Sl', importe: 2500.0 },
-    ],
-  },
-  'SLA-3': {
-    totalEur: 771653.03, totalUsd: 913993.11, count: 45,
-    txs: [
-      { fecha: '2026-02-04', detalle: 'Miguel Andres Alonso', importe: 3500.0 },
-      { fecha: '2026-02-03', detalle: 'Filomeno Serrano Garcia', importe: 3100.0 },
-      { fecha: '2026-02-03', detalle: 'Pena Enciso Maria Esperanza', importe: 10000.0 },
-    ],
-  },
-  'GRX-4': {
-    totalEur: 138500.0, totalUsd: 163984.85, count: 23,
-    txs: [
-      { fecha: '2026-02-17', detalle: 'Daniel Carcedo Blanco', importe: 15000.0 },
-      { fecha: '2026-02-17', detalle: 'Elena Calvo Vazquez', importe: 10000.0 },
-      { fecha: '2026-02-16', detalle: 'Silvia Busquets Vilaseca', importe: 10000.0 },
-    ],
-  },
+  'CME-1': { totalEur: 1507997.51, totalUsd: 1779138.83, count: 284, txs: [
+    { fecha: '2026-02-17', detalle: 'Duarte Abreu', importe: 42000 },
+    { fecha: '2026-02-17', detalle: 'Daniel Carcedo Blanco', importe: 15000 },
+    { fecha: '2026-02-17', detalle: 'Acevedo Diaz Gregorio Manuel', importe: 10000 },
+    { fecha: '2026-02-17', detalle: 'Elena Calvo Vazquez', importe: 7500 },
+    { fecha: '2026-02-16', detalle: 'Inmaculada Perello Fonseca', importe: 5000 },
+  ]},
+  'RET-2': { totalEur: 281729.46, totalUsd: 334463.34, count: 85, txs: [
+    { fecha: '2026-02-17', detalle: 'Perez Marti Angel Fernando', importe: 2500 },
+    { fecha: '2026-02-16', detalle: 'Hilario Echevarria Losada', importe: 7500 },
+  ]},
+  'SLA-3': { totalEur: 771653.03, totalUsd: 913993.11, count: 45, txs: [
+    { fecha: '2026-02-04', detalle: 'Miguel Andres Alonso', importe: 3500 },
+    { fecha: '2026-02-03', detalle: 'Pena Enciso Maria Esperanza', importe: 10000 },
+  ]},
+  'GRX-4': { totalEur: 138500, totalUsd: 163984.85, count: 23, txs: [
+    { fecha: '2026-02-17', detalle: 'Daniel Carcedo Blanco', importe: 15000 },
+    { fecha: '2026-02-16', detalle: 'Silvia Busquets Vilaseca', importe: 10000 },
+  ]},
   'LVT-2': { totalEur: 0, totalUsd: 0, count: 0, txs: [] },
 };
 
@@ -140,9 +90,18 @@ function getYearFromFecha(fecha) {
   } catch { return null; }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// API HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Parsea fecha a Date (soporta DD/MM/YYYY y YYYY-MM-DD) ──
+function parseFecha(fecha) {
+  try {
+    const f = String(fecha || '');
+    if (f.includes('/')) {
+      const [d, m, y] = f.split('/');
+      return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+    }
+    return new Date(f);
+  } catch { return null; }
+}
+
 async function fetchFiatFromSheet(safes) {
   try {
     const res = await fetch(SHEET_CSV_URL);
@@ -155,17 +114,13 @@ async function fetchFiatFromSheet(safes) {
     const parseNum = (str) => {
       const s = (str || '').replace(/"/g, '').trim();
       if (!s) return 0;
-      if (s.includes(',') && s.includes('.'))
-        return s.indexOf('.') < s.indexOf(',')
-          ? parseFloat(s.replace(/\./g, '').replace(',', '.'))
-          : parseFloat(s.replace(/,/g, ''));
+      if (s.includes(',') && s.includes('.')) return s.indexOf('.') < s.indexOf(',') ? parseFloat(s.replace(/\./g, '').replace(',', '.')) : parseFloat(s.replace(/,/g, ''));
       if (s.includes(',')) return parseFloat(s.replace(',', '.'));
       return parseFloat(s) || 0;
     };
     const result = {}, totalesUsd = {}, totalesEur = {};
     for (let i = 1; i < lines.length; i++) {
-      const cols = [];
-      let cur = '', inQuote = false;
+      const cols = []; let cur = '', inQuote = false;
       for (const ch of lines[i] + ',') {
         if (ch === '"') inQuote = !inQuote;
         else if (ch === ',' && !inQuote) { cols.push(cur.trim()); cur = ''; }
@@ -179,8 +134,7 @@ async function fetchFiatFromSheet(safes) {
       const importeEur = parseNum(clean(COL.importeEur));
       const usd = parseNum(clean(COL.usd));
       if (!result[proyecto]) { result[proyecto] = { txs: [] }; totalesUsd[proyecto] = 0; totalesEur[proyecto] = 0; }
-      totalesUsd[proyecto] += usd;
-      totalesEur[proyecto] += importeEur;
+      totalesUsd[proyecto] += usd; totalesEur[proyecto] += importeEur;
       const fecha = clean(COL.fecha), detalle = clean(COL.detalle);
       if (fecha && detalle && importeEur > 0) result[proyecto].txs.push({ fecha, detalle, importe: importeEur });
     }
@@ -230,6 +184,127 @@ function processTransfers(transfers) {
 const fmt = (n) => '$' + parseFloat(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (n) => parseFloat(n).toFixed(1) + '%';
 const isValidAddress = (addr) => /^0x[0-9a-fA-F]{40}$/.test(addr);
+const fmtDate = (d) => d ? d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROMEDIO DIARIO SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+function PromedioSection({ safes, fiatData, data, COLORS }) {
+  const today = new Date();
+  const startOfYear = new Date('2026-01-01');
+  const [desde, setDesde] = useState('2026-01-01');
+  const [hasta, setHasta] = useState(today.toISOString().slice(0, 10));
+
+  const desdeDate = new Date(desde);
+  const hastaDate = new Date(hasta);
+  hastaDate.setHours(23, 59, 59);
+
+  const diffDays = Math.max(1, Math.round((hastaDate - desdeDate) / (1000 * 60 * 60 * 24)) + 1);
+
+  // Calcula totales por safe en el rango
+  const safeStats = safes.map((safe, idx) => {
+    // Fiat en rango
+    let fiatEur = 0, fiatCount = 0;
+    const sf = fiatData[safe.name];
+    if (sf) {
+      (sf.txs || []).forEach((tx) => {
+        const d = parseFecha(tx.fecha);
+        if (d && d >= desdeDate && d <= hastaDate) { fiatEur += tx.importe || 0; fiatCount++; }
+      });
+    }
+    const fiatUsd = fiatEur * EUR_USD;
+
+    // Cripto en rango
+    let criptoUsd = 0, criptoCount = 0;
+    const safeData = (data || []).find((d) => d.name === safe.name);
+    if (safeData) {
+      (safeData.transfers || []).forEach((tx) => {
+        if (tx.timestamp >= desdeDate && tx.timestamp <= hastaDate) { criptoUsd += tx.value || 0; criptoCount++; }
+      });
+    }
+
+    const totalUsd = fiatUsd + criptoUsd;
+
+    // Rango activo: primera tx a última tx del safe
+    const allDates = [];
+    if (sf) (sf.txs || []).forEach((tx) => { const d = parseFecha(tx.fecha); if (d) allDates.push(d); });
+    if (safeData) (safeData.transfers || []).forEach((tx) => { if (tx.timestamp) allDates.push(tx.timestamp); });
+    const minDate = allDates.length ? new Date(Math.min(...allDates)) : null;
+    const maxDate = allDates.length ? new Date(Math.max(...allDates)) : null;
+    const activeDays = minDate && maxDate ? Math.max(1, Math.round((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 1) : diffDays;
+
+    // Promedio diario usando días activos del safe
+    const promDia = activeDays > 0 ? totalUsd / activeDays : 0;
+
+    return { safe, idx, fiatUsd, criptoUsd, totalUsd, fiatCount, criptoCount, promDia, activeDays, minDate, maxDate, color: COLORS[idx] };
+  });
+
+  const totalEnRango = safeStats.reduce((s, x) => s + x.totalUsd, 0);
+  const totalFiatRango = safeStats.reduce((s, x) => s + x.fiatUsd, 0);
+  const totalCriptoRango = safeStats.reduce((s, x) => s + x.criptoUsd, 0);
+  const promGlobalDia = diffDays > 0 ? totalEnRango / diffDays : 0;
+  const promFiatDia = diffDays > 0 ? totalFiatRango / diffDays : 0;
+  const promCriptoDia = diffDays > 0 ? totalCriptoRango / diffDays : 0;
+
+  const handleReset = () => { setDesde('2026-01-01'); setHasta(today.toISOString().slice(0, 10)); };
+
+  return (
+    <div className="card" style={{ padding: 20, marginTop: 20 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.78em', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+          📈 Promedio Diario de Captación
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: '0.75em', color: '#64748b' }}>Desde</label>
+          <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '5px 8px', color: '#f1f5f9', fontSize: '0.82em', fontFamily: 'monospace', outline: 'none' }} />
+          <label style={{ fontSize: '0.75em', color: '#64748b' }}>Hasta</label>
+          <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: '5px 8px', color: '#f1f5f9', fontSize: '0.82em', fontFamily: 'monospace', outline: 'none' }} />
+          <span style={{ fontSize: '0.75em', color: '#00d4aa', background: '#00d4aa18', borderRadius: 6, padding: '4px 10px', border: '1px solid #00d4aa33' }}>{diffDays} días en el rango</span>
+          <button onClick={handleReset} style={{ background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', borderRadius: 6, padding: '5px 12px', cursor: 'pointer', fontSize: '0.78em', fontFamily: 'monospace' }}>↺ Reset</button>
+        </div>
+      </div>
+
+      {/* KPIs globales */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10, marginBottom: 20 }}>
+        {[
+          { label: 'Total en Rango', value: fmt(totalEnRango), sub: 'Fiat + Cripto', color: '#00d4aa' },
+          { label: 'Promedio / Día', value: fmt(promGlobalDia), sub: 'Global todos los safes', color: '#818cf8' },
+          { label: 'Fiat en Rango', value: fmt(totalFiatRango), sub: fmt(promFiatDia) + '/día', color: '#60a5fa' },
+          { label: 'Cripto en Rango', value: fmt(totalCriptoRango), sub: fmt(promCriptoDia) + '/día', color: '#fb923c' },
+        ].map((k, i) => (
+          <div key={i} style={{ background: '#0f172a', borderRadius: 10, padding: '14px 16px', borderLeft: '3px solid ' + k.color }}>
+            <div style={{ fontSize: '0.72em', color: '#64748b', textTransform: 'uppercase', marginBottom: 6 }}>{k.label}</div>
+            <div style={{ fontSize: '1.35em', fontWeight: 700, color: k.color }}>{k.value}</div>
+            <div style={{ fontSize: '0.72em', color: '#475569', marginTop: 3 }}>{k.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tarjetas por safe */}
+      <div style={{ fontSize: '0.75em', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Promedio Diario por Safe</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 10 }}>
+        {safeStats.map((s, i) => (
+          <div key={i} style={{ background: '#0f172a', borderRadius: 10, padding: '14px 16px', borderLeft: '3px solid ' + s.color }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, color: s.color, fontSize: '0.95em' }}>{s.safe.name}</span>
+              <span style={{ fontSize: '0.7em', color: '#475569' }}>{s.activeDays}d activos</span>
+            </div>
+            <div style={{ fontSize: '1.5em', fontWeight: 700, color: s.color, marginBottom: 4 }}>{fmt(s.promDia)}<span style={{ fontSize: '0.45em', color: '#64748b' }}>/día</span></div>
+            <div style={{ background: '#1e293b', borderRadius: 3, height: 3, marginBottom: 8 }}>
+              <div style={{ background: s.color, borderRadius: 3, height: 3, width: pct(totalEnRango > 0 ? (s.totalUsd / totalEnRango) * 100 : 0), transition: 'width 0.5s' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              <div style={{ fontSize: '0.7em', color: '#475569' }}>Total: <span style={{ color: '#f1f5f9', fontWeight: 600 }}>{fmt(s.totalUsd)}</span></div>
+              <div style={{ fontSize: '0.7em', color: '#475569', textAlign: 'right' }}>{pct(totalEnRango > 0 ? (s.totalUsd / totalEnRango) * 100 : 0)} del total</div>
+              {s.minDate && <div style={{ fontSize: '0.65em', color: '#334155', gridColumn: '1/-1' }}>1ª tx: {fmtDate(s.minDate)}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN MODAL
@@ -241,13 +316,13 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
             <div style={{ fontWeight: 700, color: '#f1f5f9', fontSize: '1.1em' }}>⚙️ Panel de Administración</div>
-            <div style={{ fontSize: '0.75em', color: '#475569', marginTop: 3 }}>Cambios sincronizados para todos los usuarios vía JSONbin</div>
+            <div style={{ fontSize: '0.75em', color: '#475569', marginTop: 3 }}>Cambios sincronizados para todos los usuarios</div>
           </div>
           <button onClick={handleCloseAdmin} style={{ background: '#334155', border: 'none', color: '#94a3b8', borderRadius: 7, padding: '6px 12px', cursor: 'pointer', fontSize: '0.9em', fontFamily: 'monospace' }}>✕ Cerrar</button>
         </div>
         <div style={{ background: '#00d4aa18', border: '1px solid #00d4aa44', borderRadius: 8, padding: '8px 14px', marginBottom: 20, fontSize: '0.78em', color: '#00d4aa', display: 'flex', alignItems: 'center', gap: 8 }}>
           🌐 <span>Storage compartido — visible para todos los usuarios</span>
-          {saving && <span style={{ marginLeft: 'auto', color: '#fb923c' }}>⏳ Guardando en JSONbin...</span>}
+          {saving && <span style={{ marginLeft: 'auto', color: '#fb923c' }}>⏳ Guardando...</span>}
         </div>
         {!adminUnlocked ? (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -313,13 +388,12 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENTE PRINCIPAL
+// APP PRINCIPAL
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [saving, setSaving] = useState(false);
-
   const [safes, setSafes] = useState(DEFAULT_SAFES);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -332,7 +406,6 @@ export default function App() {
   const [fiatSource, setFiatSource] = useState('fallback');
   const [fiatLastUpdate, setFiatLastUpdate] = useState(null);
   const [fiatLoading, setFiatLoading] = useState(false);
-
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -347,27 +420,21 @@ export default function App() {
 
   const COLORS = safes.map((_, i) => COLOR_PALETTE[i % COLOR_PALETTE.length]);
 
-  // ── Init: carga safes desde JSONbin ──
   useEffect(() => {
     (async () => {
       try {
         const stored = await loadSafesFromJSONBin();
         if (stored) setSafes(stored);
         setStorageReady(true);
-      } catch (e) {
-        setStorageError(true);
-        setStorageReady(true);
-      }
+      } catch (e) { setStorageError(true); setStorageReady(true); }
     })();
   }, []);
 
   const persistSafes = async (updated) => {
-    setSaving(true);
-    setSafes(updated);
+    setSaving(true); setSafes(updated);
     const ok = await saveSafesToJSONBin(updated);
     if (!ok) setStorageError(true);
-    setSaving(false);
-    setData(null);
+    setSaving(false); setData(null);
   };
 
   const refreshFiat = async () => {
@@ -419,7 +486,7 @@ export default function App() {
     const updated = [...safes, { address: newSafeAddr, name: newSafeName.trim().toUpperCase() }];
     await persistSafes(updated);
     setNewSafeName(''); setNewSafeAddr('');
-    setAddSuccess('Safe "' + newSafeName.trim().toUpperCase() + '" añadido y sincronizado ✅');
+    setAddSuccess('Safe "' + newSafeName.trim().toUpperCase() + '" añadido ✅');
     setTimeout(() => setAddSuccess(''), 3000);
   };
 
@@ -437,7 +504,7 @@ export default function App() {
   };
 
   const handleResetDefaults = async () => {
-    if (!window.confirm('¿Restaurar los Safes por defecto? Se perderán los cambios.')) return;
+    if (!window.confirm('¿Restaurar los Safes por defecto?')) return;
     await persistSafes(DEFAULT_SAFES);
     setAddSuccess('Safes restaurados ✅');
     setTimeout(() => setAddSuccess(''), 3000);
@@ -473,8 +540,7 @@ export default function App() {
     Object.values(fiatData).forEach((safe) => {
       (safe.txs || []).forEach((tx) => {
         try {
-          const f = String(tx.fecha || '');
-          let yr, mo;
+          const f = String(tx.fecha || ''); let yr, mo;
           if (f.includes('/')) { const p = f.split('/'); yr = p[2]; mo = parseInt(p[1]); }
           else { yr = f.slice(0, 4); mo = parseInt(f.slice(5, 7)); }
           if (yr === '2026' && mo >= 1 && mo <= 12) mFiat[mo] += (tx.importe || 0) * EUR_USD;
@@ -806,21 +872,30 @@ export default function App() {
               </div>
             )}
 
+            {/* ── TAB 2026 — con Promedio Diario ── */}
             {activeTab === '2026' && (() => {
               const cripto2026 = data.map((safe) => ({ ...safe, transfers2026: safe.transfers.filter((tx) => tx.timestamp.getFullYear() === 2026) }));
               const cripto2026Total = cripto2026.reduce((s, safe) => s + safe.transfers2026.reduce((ss, tx) => ss + tx.value, 0), 0);
               const cripto2026Txs = cripto2026.reduce((s, safe) => s + safe.transfers2026.length, 0);
               let fiat2026Eur = 0, fiat2026Count = 0;
-              safes.forEach((safe) => { const sf = fiatData[safe.name]; if (!sf) return; (sf.txs || []).forEach((tx) => { if (getYearFromFecha(tx.fecha) === '2026') { fiat2026Eur += tx.importe || 0; fiat2026Count += 1; } }); });
-              const fiat2026Total = fiat2026Eur * EUR_USD, total2026 = cripto2026Total + fiat2026Total;
+              safes.forEach((safe) => {
+                const sf = fiatData[safe.name]; if (!sf) return;
+                (sf.txs || []).forEach((tx) => { if (getYearFromFecha(tx.fecha) === '2026') { fiat2026Eur += tx.importe || 0; fiat2026Count += 1; } });
+              });
+              const fiat2026Total = fiat2026Eur * EUR_USD;
+              const total2026 = cripto2026Total + fiat2026Total;
+              const pctFiat2026 = total2026 > 0 ? (fiat2026Total / total2026) * 100 : 0;
+              const pctCripto2026 = total2026 > 0 ? (cripto2026Total / total2026) * 100 : 0;
               return (
                 <div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12, marginBottom: 20 }}>
                     <KPI label="Capital Total 2026 (USD)" value={fmt(total2026)} sub="Fiat + Cripto en 2026" color="#00d4aa" />
                     <KPI label="Fiat 2026" value={fmt(fiat2026Total)} sub={fiat2026Count + ' inversores'} color="#818cf8" />
                     <KPI label="Cripto 2026 (USDT)" value={fmt(cripto2026Total)} sub={cripto2026Txs + ' TXs on-chain'} color="#fb923c" />
-                    <KPI label="Mix Fiat / Cripto" value={(total2026>0?(fiat2026Total/total2026*100):0).toFixed(1)+'% / '+(total2026>0?(cripto2026Total/total2026*100):0).toFixed(1)+'%'} sub="Fiat vs Cripto 2026" color="#f472b6" />
+                    <KPI label="Mix Fiat / Cripto" value={pctFiat2026.toFixed(1) + '% / ' + pctCripto2026.toFixed(1) + '%'} sub="Fiat vs Cripto 2026" color="#f472b6" />
                   </div>
+                  {/* ✅ SECCIÓN PROMEDIO DIARIO */}
+                  <PromedioSection safes={safes} fiatData={fiatData} data={data} COLORS={COLORS} />
                   <BudgetSection />
                 </div>
               );
