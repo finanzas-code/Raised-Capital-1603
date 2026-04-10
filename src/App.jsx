@@ -634,7 +634,7 @@ export default function App() {
       (safe.txs||[]).forEach(tx=>{
         try {
           const f=String(tx.fecha||''); let yr,mo;
-          if(f.includes('/'){const p=f.split('/');yr=p[2];mo=parseInt(p[1]);}
+          if(f.includes('/')){const p=f.split('/');yr=p[2];mo=parseInt(p[1]);}
           else{yr=f.slice(0,4);mo=parseInt(f.slice(5,7));}
           if(yr==='2026'&&mo>=1&&mo<=12) mFiat[mo]+=(tx.importe||0)*EUR_USD;
         }catch(e){}
