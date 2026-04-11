@@ -496,10 +496,11 @@ export default function App() {
               count: safe.frozenData.criptoTxs || 0,
               average: '0.00',
             },
-            fiat: fiatData[safe.name] || {
-              totalEur: safe.frozenData.fiatEur||0,
-              totalUsd: safe.frozenData.fiatUsd||0,
-              count: safe.frozenData.inversores||0,
+            // SIEMPRE frozenData para sold out — fiatData tiene el fallback incorrecto
+            fiat: {
+              totalEur: safe.frozenData.fiatEur || 0,
+              totalUsd: safe.frozenData.fiatUsd || 0,
+              count: safe.frozenData.inversores || 0,
               txs: [],
             },
           });
@@ -613,7 +614,13 @@ export default function App() {
     txs: data.reduce((s,d)=>s+d.metrics.count,0),
   } : null;
 
-  const fTotals = {
+  // fTotals: cuando data está cargado usamos data[x].fiat (fuente de verdad)
+  // Los sold out ya tienen sus valores congelados en data[x].fiat desde loadAll
+  const fTotals = data ? {
+    totalUsd: data.reduce((s,d)=>s+(d.fiat?.totalUsd||0),0),
+    totalEur: data.reduce((s,d)=>s+(d.fiat?.totalEur||0),0),
+    inversores: data.reduce((s,d)=>s+(d.fiat?.count||0),0),
+  } : {
     totalUsd: Object.values(fiatData).reduce((s,d)=>s+(d.totalUsd||0),0),
     totalEur: Object.values(fiatData).reduce((s,d)=>s+(d.totalEur||0),0),
     inversores: Object.values(fiatData).reduce((s,d)=>s+(d.count||0),0),
@@ -630,21 +637,42 @@ export default function App() {
   const BudgetSection = () => {
     const nowMo = new Date().getMonth();
     const mFiat = new Array(13).fill(0);
-    Object.values(fiatData).forEach(safe=>{
-      (safe.txs||[]).forEach(tx=>{
+    // Safes activos: sumar txs del sheet por mes
+    // Safes sold out: imputar fiat.totalUsd al mes de cierre (fecha en frozenData.date DD/MM/YYYY)
+    (data || []).forEach(safe => {
+      if (safe.soldOut && safe.frozenData) {
         try {
-          const f=String(tx.fecha||''); let yr,mo;
-          if(f.includes('/')){const p=f.split('/');yr=p[2];mo=parseInt(p[1]);}
-          else{yr=f.slice(0,4);mo=parseInt(f.slice(5,7));}
-          if(yr==='2026'&&mo>=1&&mo<=12) mFiat[mo]+=(tx.importe||0)*EUR_USD;
-        }catch(e){}
-      });
+          const parts = (safe.frozenData.date || '').split('/');
+          const mo = parseInt(parts[1]);
+          if (mo >= 1 && mo <= 12) mFiat[mo] += safe.fiat?.totalUsd || 0;
+        } catch(e) {}
+      } else {
+        const sf = fiatData[safe.name];
+        (sf?.txs || []).forEach(tx => {
+          try {
+            const f = String(tx.fecha || ''); let yr, mo;
+            if (f.includes('/')) { const p = f.split('/'); yr = p[2]; mo = parseInt(p[1]); }
+            else { yr = f.slice(0, 4); mo = parseInt(f.slice(5, 7)); }
+            if (yr === '2026' && mo >= 1 && mo <= 12) mFiat[mo] += (tx.importe || 0) * EUR_USD;
+          } catch(e) {}
+        });
+      }
     });
     const mCripto = new Array(13).fill(0);
-    (data||[]).forEach(safe=>{
-      (safe.transfers||[]).forEach(tx=>{
-        try{if(tx.timestamp.getFullYear()===2026)mCripto[tx.timestamp.getMonth()+1]+=tx.value||0;}catch(e){}
-      });
+    // Safes activos: filtrar transfers por mes
+    // Safes sold out: imputar metrics.total al mes de cierre
+    (data || []).forEach(safe => {
+      if (safe.soldOut && safe.frozenData) {
+        try {
+          const parts = (safe.frozenData.date || '').split('/');
+          const mo = parseInt(parts[1]);
+          if (mo >= 1 && mo <= 12) mCripto[mo] += parseFloat(safe.metrics.total) || 0;
+        } catch(e) {}
+      } else {
+        (safe.transfers || []).forEach(tx => {
+          try { if (tx.timestamp.getFullYear() === 2026) mCripto[tx.timestamp.getMonth() + 1] += tx.value || 0; } catch(e) {}
+        });
+      }
     });
     let ytdGoal=0,ytdReal=0;
     const rows=BUDGET_2026.map((b,i)=>{
@@ -1033,15 +1061,44 @@ export default function App() {
 
             {/* ── 2026 ── */}
             {activeTab==='2026'&&(()=>{
-              const cripto2026=data.map(safe=>({...safe,transfers2026:safe.transfers.filter(tx=>tx.timestamp.getFullYear()===2026)}));
-              const cripto2026Total=cripto2026.reduce((s,safe)=>s+safe.transfers2026.reduce((ss,tx)=>ss+tx.value,0),0);
-              const cripto2026Txs=cripto2026.reduce((s,safe)=>s+safe.transfers2026.length,0);
-              let fiat2026Eur=0,fiat2026Count=0;
-              safes.forEach(safe=>{
-                const sf=fiatData[safe.name]; if(!sf) return;
-                (sf.txs||[]).forEach(tx=>{if(getYearFromFecha(tx.fecha)==='2026'){fiat2026Eur+=tx.importe||0;fiat2026Count++;}});
+              // Los safes sold out ya tienen en data:
+              //   transfers: []  pero  metrics.total = frozenData.criptoUsd
+              //   fiat.totalUsd = frozenData.fiatUsd
+              // Así que usamos data directamente igual que el consolidado.
+
+              // CRIPTO 2026: activos → filtrar transfers por año | sold out → metrics.total completo
+              let cripto2026Total = 0, cripto2026Txs = 0;
+              data.forEach(safe => {
+                if (safe.soldOut && safe.frozenData) {
+                  cripto2026Total += parseFloat(safe.metrics.total) || 0;
+                  cripto2026Txs  += safe.metrics.count || 0;
+                } else {
+                  safe.transfers.forEach(tx => {
+                    if (tx.timestamp.getFullYear() === 2026) {
+                      cripto2026Total += tx.value || 0;
+                      cripto2026Txs++;
+                    }
+                  });
+                }
               });
-              const fiat2026Total=fiat2026Eur*EUR_USD;
+
+              // FIAT 2026: activos → txs del sheet filtradas por año | sold out → fiat.totalUsd completo
+              let fiat2026Usd = 0, fiat2026Count = 0;
+              data.forEach(safe => {
+                if (safe.soldOut && safe.frozenData) {
+                  fiat2026Usd   += safe.fiat?.totalUsd || 0;
+                  fiat2026Count += safe.fiat?.count || 0;
+                } else {
+                  const sf = fiatData[safe.name]; if (!sf) return;
+                  (sf.txs || []).forEach(tx => {
+                    if (getYearFromFecha(tx.fecha) === '2026') {
+                      fiat2026Usd += (tx.importe || 0) * EUR_USD;
+                      fiat2026Count++;
+                    }
+                  });
+                }
+              });
+              const fiat2026Total = fiat2026Usd;
               const total2026=cripto2026Total+fiat2026Total;
               const pctFiat2026=total2026>0?(fiat2026Total/total2026)*100:0;
               const pctCripto2026=total2026>0?(cripto2026Total/total2026)*100:0;
