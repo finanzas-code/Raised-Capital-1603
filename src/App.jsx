@@ -403,7 +403,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
   const [data, setData] = useState(null);
-  const [auto, setAuto] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [loadTime, setLoadTime] = useState(null);
   const [activeTab, setActiveTab] = useState('consolidado');
@@ -520,10 +519,6 @@ export default function App() {
     finally { setLoading(false); setMsg(''); }
   };
 
-  useEffect(() => {
-    let iv; if (auto) iv = setInterval(loadAll, 60000);
-    return () => clearInterval(iv);
-  }, [auto, fiatData, safes]);
 
   const handlePinSubmit = () => {
     if (pinInput === ADMIN_PIN) { setAdminUnlocked(true); setPinError(''); }
@@ -819,7 +814,7 @@ export default function App() {
           <button onClick={()=>setShowAdmin(true)} style={{ background:'#1e293b', color:'#818cf8', border:'1px solid #334155', borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>⚙️ Admin</button>
           {data&&<>
             <button onClick={loadAll} disabled={loading} style={{ background:'#1e293b', color:'#00d4aa', border:'1px solid #00d4aa44', borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>{loading?'⏳':'↺ Refresh'}</button>
-            <button onClick={()=>setAuto(!auto)} style={{ background:auto?'#00d4aa18':'#1e293b', color:auto?'#00d4aa':'#64748b', border:'1px solid '+(auto?'#00d4aa':'#334155'), borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>{auto?'⏸ Auto ON':'▶ Auto 60s'}</button>
+
             <button onClick={()=>refreshFiat(safes)} disabled={fiatLoading} style={{ background:fiatLoading?'#0f172a':fiatSource==='sheet'?'#00d4aa18':'#fb923c18', color:fiatLoading?'#475569':fiatSource==='sheet'?'#00d4aa':'#fb923c', border:'1px solid '+(fiatSource==='sheet'?'#00d4aa44':'#fb923c44'), borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:fiatLoading?'default':'pointer', fontFamily:'monospace' }}>{fiatLoading?'⟳ Fiat...':'📊 Fiat Sheet'}</button>
           </>}
         </div>
