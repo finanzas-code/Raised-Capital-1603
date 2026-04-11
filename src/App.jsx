@@ -114,7 +114,6 @@ async function fetchFiatFromSheet(safes) {
     const lines = csv.trim().split('\n');
     if (lines.length < 2) throw new Error('Sheet vacía');
     const COL = { fecha: 4, proyecto: 5, detalle: 7, importeEur: 8, usd: 11, estado: 13 };
-    // Solo consultar safes ACTIVOS
     const SAFE_NAMES = safes.filter(s => !s.soldOut).map(s => s.name);
     const parseNum = (str) => {
       const s = (str || '').replace(/"/g, '').trim();
@@ -195,15 +194,8 @@ const pct = (n) => parseFloat(n).toFixed(1) + '%';
 const isValidAddress = (addr) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 const fmtDate = (d) => d ? d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
 
-// ─── SOLD OUT BADGE ───
 const SoldOutBadge = () => (
-  <div style={{
-    display: 'inline-flex', alignItems: 'center', gap: 4,
-    background: 'linear-gradient(135deg,#f59e0b22,#ef444422)',
-    border: '1px solid #f59e0b88', borderRadius: 6,
-    padding: '2px 8px', fontSize: '0.68em', fontWeight: 800,
-    letterSpacing: '0.1em', color: '#fbbf24', textTransform: 'uppercase',
-  }}>🔒 SOLD OUT</div>
+  <div style={{ display:'inline-flex', alignItems:'center', gap:4, background:'linear-gradient(135deg,#f59e0b22,#ef444422)', border:'1px solid #f59e0b88', borderRadius:6, padding:'2px 8px', fontSize:'0.68em', fontWeight:800, letterSpacing:'0.1em', color:'#fbbf24', textTransform:'uppercase' }}>🔒 SOLD OUT</div>
 );
 
 // ─── PROMEDIO DIARIO ───
@@ -216,9 +208,16 @@ function PromedioSection({ safes, fiatData, data, COLORS }) {
   const diffDays = Math.max(1, Math.round((hastaDate - desdeDate) / 86400000) + 1);
 
   const safeStats = safes.map((safe, idx) => {
+    // Para sold out: usar frozenData directamente
+    if (safe.soldOut && safe.frozenData) {
+      const totalUsd = safe.frozenData.totalUsd || 0;
+      const fiatUsd = safe.frozenData.fiatUsd || 0;
+      const criptoUsd = safe.frozenData.criptoUsd || 0;
+      return { safe, idx, fiatUsd, criptoUsd, totalUsd, fiatCount: safe.frozenData.inversores||0, criptoCount: safe.frozenData.criptoTxs||0, promDia: totalUsd/diffDays, activeDays: diffDays, minDate: null, maxDate: null, color: COLORS[idx] };
+    }
     let fiatEur = 0, fiatCount = 0;
     const sf = fiatData[safe.name];
-    if (sf) (sf.txs || []).forEach(tx => { const d = parseFecha(tx.fecha); if (d && d >= desdeDate && d <= hastaDate) { fiatEur += tx.importe||0; fiatCount++; } });
+    if (sf) (sf.txs||[]).forEach(tx => { const d = parseFecha(tx.fecha); if (d && d >= desdeDate && d <= hastaDate) { fiatEur += tx.importe||0; fiatCount++; } });
     const fiatUsd = fiatEur * EUR_USD;
     let criptoUsd = 0, criptoCount = 0;
     const safeData = (data||[]).find(d => d.name === safe.name);
@@ -238,7 +237,7 @@ function PromedioSection({ safes, fiatData, data, COLORS }) {
   const totalCriptoRango = safeStats.reduce((s,x)=>s+x.criptoUsd,0);
 
   return (
-    <div className="card" style={{ padding: 20, marginTop: 20 }}>
+    <div className="card" style={{ padding:20, marginTop:20 }}>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
         <div style={{ fontSize:'0.78em', color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.08em', fontWeight:700 }}>📈 Promedio Diario de Captación</div>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginLeft:'auto', flexWrap:'wrap' }}>
@@ -351,20 +350,11 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
                         {!safe.soldOut && (
                           <button onClick={()=>{setEditIdx(idx);setEditName(safe.name);setEditAddr(safe.address);}} style={{ background:'#1e293b', color:'#818cf8', border:'1px solid #334155', borderRadius:6, padding:'4px 9px', cursor:'pointer', fontSize:'0.72em', fontFamily:'monospace' }}>✏️</button>
                         )}
-                        {/* ── BOTÓN SOLD OUT / REACTIVAR ── */}
                         <button
                           onClick={()=>handleToggleSoldOut(idx)}
                           disabled={saving||(!safe.soldOut&&!hasData)}
-                          title={!hasData&&!safe.soldOut?'Carga el dashboard primero':safe.soldOut?'Reactivar — vuelve a consultar en tiempo real':'Marcar Sold Out — congela datos actuales'}
-                          style={{
-                            background: safe.soldOut?'#00d4aa18':'#f59e0b18',
-                            color: safe.soldOut?'#00d4aa':'#f59e0b',
-                            border:'1px solid '+(safe.soldOut?'#00d4aa44':'#f59e0b44'),
-                            borderRadius:6, padding:'4px 9px',
-                            cursor:(saving||(!safe.soldOut&&!hasData))?'not-allowed':'pointer',
-                            fontSize:'0.72em', fontFamily:'monospace',
-                            opacity:(!safe.soldOut&&!hasData)?0.35:1,
-                          }}
+                          title={!hasData&&!safe.soldOut?'Carga el dashboard primero':safe.soldOut?'Reactivar':'Marcar Sold Out'}
+                          style={{ background:safe.soldOut?'#00d4aa18':'#f59e0b18', color:safe.soldOut?'#00d4aa':'#f59e0b', border:'1px solid '+(safe.soldOut?'#00d4aa44':'#f59e0b44'), borderRadius:6, padding:'4px 9px', cursor:(saving||(!safe.soldOut&&!hasData))?'not-allowed':'pointer', fontSize:'0.72em', fontFamily:'monospace', opacity:(!safe.soldOut&&!hasData)?0.35:1 }}
                         >{safe.soldOut?'▶ Reactivar':'🔒 Sold Out'}</button>
                         <button onClick={()=>handleDeleteSafe(idx)} disabled={saving} style={{ background:'#1e293b', color:'#ef4444', border:'1px solid #334155', borderRadius:6, padding:'4px 9px', cursor:'pointer', fontSize:'0.72em', fontFamily:'monospace' }}>🗑</button>
                       </div>
@@ -459,12 +449,7 @@ export default function App() {
     setFiatLoading(true);
     const sheetData = await fetchFiatFromSheet(sf);
     if (sheetData) {
-      // Merge: datos frescos de activos + mantener congelados de soldOut
-      setFiatData(prev => {
-        const merged = { ...prev };
-        Object.keys(sheetData).forEach(k => { merged[k] = sheetData[k]; });
-        return merged;
-      });
+      setFiatData(prev => { const m = {...prev}; Object.keys(sheetData).forEach(k=>{ m[k]=sheetData[k]; }); return m; });
       setFiatSource('sheet'); setFiatLastUpdate(new Date());
     } else { setFiatSource('fallback'); }
     setFiatLoading(false);
@@ -477,14 +462,15 @@ export default function App() {
     return () => clearInterval(iv);
   }, [safes, storageReady]);
 
-  // ── loadAll: Moralis solo para safes ACTIVOS ──
+  // ── loadAll ──
+  // FIX CLAVE: refresca el sheet ANTES de consultar blockchain
+  // para que fiatData tenga datos reales cuando se construyen los resultados
   const loadAll = async () => {
     setData(null); setLoading(true);
     const t0 = Date.now();
     try {
-      // Refrescar fiat del sheet ANTES de cargar blockchain
-      // Así garantizamos que fiatData tiene datos actuales, no el fallback
-      setMsg('Actualizando datos fiat...');
+      // 1. Refrescar fiat del sheet primero
+      setMsg('Actualizando datos fiat del sheet...');
       const sheetData = await fetchFiatFromSheet(safes);
       let fiatActual = { ...fiatData };
       if (sheetData) {
@@ -494,21 +480,22 @@ export default function App() {
         setFiatLastUpdate(new Date());
       }
 
+      // 2. Cargar blockchain solo para activos
       const results = [];
       for (const safe of safes) {
         if (safe.soldOut && safe.frozenData) {
-          // Usar datos congelados sin tocar blockchain ni sheet
+          // Sold out: usar datos congelados, sin tocar Moralis ni sheet
           setMsg(`${safe.name} (SOLD OUT — datos congelados)`);
           results.push({
             ...safe,
             balance: safe.frozenData.balance || '0.00',
             transfers: [],
             metrics: {
-              total: (safe.frozenData.criptoUsd||0).toFixed(2),
+              total: (safe.frozenData.criptoUsd || 0).toFixed(2),
               count: safe.frozenData.criptoTxs || 0,
               average: '0.00',
             },
-            // SIEMPRE frozenData para sold out — fiatData tiene el fallback incorrecto
+            // SIEMPRE frozenData para fiat de sold out
             fiat: {
               totalEur: safe.frozenData.fiatEur || 0,
               totalUsd: safe.frozenData.fiatUsd || 0,
@@ -517,9 +504,15 @@ export default function App() {
             },
           });
         } else {
+          // Activo: consultar blockchain y usar fiatActual (recién del sheet)
           setMsg('Cargando ' + safe.name + '...');
           const [balance, transfers] = await Promise.all([getBalance(safe.address), getTransfers(safe.address)]);
-          results.push({ ...safe, balance, ...processTransfers(transfers), fiat: fiatActual[safe.name] || { totalEur: 0, totalUsd: 0, count: 0, txs: [] } });
+          results.push({
+            ...safe,
+            balance,
+            ...processTransfers(transfers),
+            fiat: fiatActual[safe.name] || { totalEur:0, totalUsd:0, count:0, txs:[] },
+          });
         }
       }
       setData(results); setLastUpdate(new Date()); setLoadTime(((Date.now()-t0)/1000).toFixed(1));
@@ -573,11 +566,11 @@ export default function App() {
     setData(null);
   };
 
-  // ── SOLD OUT: congela datos actuales de pantalla ──
+  // ── SOLD OUT ──
+  // Al freezar se captura el desglose 2026 además del total histórico
   const handleToggleSoldOut = async (idx) => {
     const safe = safes[idx];
     if (safe.soldOut) {
-      // Reactivar
       if (!window.confirm(`¿Reactivar "${safe.name}"?\nVolverá a consultar blockchain y sheet en tiempo real.`)) return;
       const updated = safes.map((s,i) => {
         if (i !== idx) return s;
@@ -588,54 +581,76 @@ export default function App() {
       setData(null);
       return;
     }
-    // Marcar Sold Out — tomar snapshot de pantalla
     if (!data) return;
-    const safeData = data.find(d=>d.name===safe.name);
-    const fiatSafe = fiatData[safe.name] || { totalEur:0, totalUsd:0, count:0 };
+    const safeData = data.find(d => d.name === safe.name);
+    const fiatSafe = fiatData[safe.name] || { totalEur:0, totalUsd:0, count:0, txs:[] };
     const criptoUsd = safeData ? parseFloat(safeData.metrics.total) : 0;
     const criptoTxs = safeData ? safeData.metrics.count : 0;
     const balance = safeData ? safeData.balance : '0.00';
     const totalUsd = fiatSafe.totalUsd + criptoUsd;
     const today = new Date().toLocaleDateString('es-ES');
 
+    // Calcular desglose 2026 en el momento del freeze
+    const criptoUsd2026 = safeData
+      ? (safeData.transfers||[]).filter(tx => tx.timestamp.getFullYear() === 2026).reduce((s,tx) => s + tx.value, 0)
+      : 0;
+    const criptoTxs2026 = safeData
+      ? (safeData.transfers||[]).filter(tx => tx.timestamp.getFullYear() === 2026).length
+      : 0;
+    const fiatUsd2026 = (fiatSafe.txs||[])
+      .filter(tx => getYearFromFecha(tx.fecha) === '2026')
+      .reduce((s,tx) => s + (tx.importe||0) * EUR_USD, 0);
+    const fiatCount2026 = (fiatSafe.txs||[]).filter(tx => getYearFromFecha(tx.fecha) === '2026').length;
+    const total2026snap = criptoUsd2026 + fiatUsd2026;
+
     if (!window.confirm(
-      `¿Marcar "${safe.name}" como SOLD OUT?\n\n`+
-      `Datos que se congelarán:\n`+
-      `• Fiat: ${fmt(fiatSafe.totalUsd)} (${fiatSafe.count} inversores)\n`+
-      `• Cripto USDT: ${fmt(criptoUsd)} (${criptoTxs} txs)\n`+
-      `• Total: ${fmt(totalUsd)}\n\n`+
+      `¿Marcar "${safe.name}" como SOLD OUT?\n\n` +
+      `Histórico total:\n` +
+      `  Fiat: ${fmt(fiatSafe.totalUsd)} (${fiatSafe.count} inv)\n` +
+      `  Cripto: ${fmt(criptoUsd)} (${criptoTxs} txs)\n` +
+      `  Total: ${fmt(totalUsd)}\n\n` +
+      `Solo 2026:\n` +
+      `  Fiat: ${fmt(fiatUsd2026)} (${fiatCount2026} txs)\n` +
+      `  Cripto: ${fmt(criptoUsd2026)} (${criptoTxs2026} txs)\n` +
+      `  Total 2026: ${fmt(total2026snap)}\n\n` +
       `Dejará de consultar Moralis y el sheet.`
     )) return;
 
-    const updated = safes.map((s,i) => i!==idx ? s : {
-      ...s, soldOut: true,
-      frozenData: { fiatEur:fiatSafe.totalEur, fiatUsd:fiatSafe.totalUsd, inversores:fiatSafe.count, criptoUsd, criptoTxs, totalUsd, balance, date:today },
+    const updated = safes.map((s,i) => i !== idx ? s : {
+      ...s,
+      soldOut: true,
+      frozenData: {
+        // Histórico total
+        fiatEur: fiatSafe.totalEur, fiatUsd: fiatSafe.totalUsd, inversores: fiatSafe.count,
+        criptoUsd, criptoTxs, totalUsd, balance, date: today,
+        // Desglose 2026 — usado por el tab 2026
+        criptoUsd2026, criptoTxs2026, fiatUsd2026, fiatCount2026, total2026: total2026snap,
+      },
     });
     await persistSafes(updated);
-    // Actualizar data local sin recargar blockchain
-    setData(prev => prev ? prev.map(d => d.name===safe.name?{...d,soldOut:true}:d) : prev);
+    setData(prev => prev ? prev.map(d => d.name === safe.name ? {...d, soldOut:true} : d) : prev);
   };
 
   const handleCloseAdmin = () => {
     setShowAdmin(false); setAdminUnlocked(false); setPinInput(''); setPinError(''); setEditIdx(null); setAddError('');
   };
 
+  // ── TOTALES ──
+  // Fuente de verdad: data[x].fiat y data[x].metrics (incluye frozen de sold out)
   const cTotals = data ? {
-    balance: data.reduce((s,d)=>s+parseFloat(d.balance),0).toFixed(2),
-    received: data.reduce((s,d)=>s+parseFloat(d.metrics.total),0).toFixed(2),
-    txs: data.reduce((s,d)=>s+d.metrics.count,0),
+    balance: data.reduce((s,d) => s + parseFloat(d.balance), 0).toFixed(2),
+    received: data.reduce((s,d) => s + parseFloat(d.metrics.total), 0).toFixed(2),
+    txs: data.reduce((s,d) => s + d.metrics.count, 0),
   } : null;
 
-  // fTotals: cuando data está cargado usamos data[x].fiat (fuente de verdad)
-  // Los sold out ya tienen sus valores congelados en data[x].fiat desde loadAll
   const fTotals = data ? {
-    totalUsd: data.reduce((s,d)=>s+(d.fiat?.totalUsd||0),0),
-    totalEur: data.reduce((s,d)=>s+(d.fiat?.totalEur||0),0),
-    inversores: data.reduce((s,d)=>s+(d.fiat?.count||0),0),
+    totalUsd: data.reduce((s,d) => s + (d.fiat?.totalUsd || 0), 0),
+    totalEur: data.reduce((s,d) => s + (d.fiat?.totalEur || 0), 0),
+    inversores: data.reduce((s,d) => s + (d.fiat?.count || 0), 0),
   } : {
-    totalUsd: Object.values(fiatData).reduce((s,d)=>s+(d.totalUsd||0),0),
-    totalEur: Object.values(fiatData).reduce((s,d)=>s+(d.totalEur||0),0),
-    inversores: Object.values(fiatData).reduce((s,d)=>s+(d.count||0),0),
+    totalUsd: Object.values(fiatData).reduce((s,d) => s + (d.totalUsd||0), 0),
+    totalEur: Object.values(fiatData).reduce((s,d) => s + (d.totalEur||0), 0),
+    inversores: Object.values(fiatData).reduce((s,d) => s + (d.count||0), 0),
   };
 
   const KPI = ({ label, value, sub, color }) => (
@@ -650,85 +665,88 @@ export default function App() {
     const nowMo = new Date().getMonth();
     const mFiat = new Array(13).fill(0);
     const mCripto = new Array(13).fill(0);
+
     (data || []).forEach(safe => {
       if (safe.soldOut && safe.frozenData) {
-        // Sold out: imputar al mes de cierre (frozenData.date = DD/MM/YYYY)
+        // Sold out: imputar al mes de cierre usando desglose 2026
         try {
           const parts = (safe.frozenData.date || '').split('/');
           const mo = parseInt(parts[1]);
           if (mo >= 1 && mo <= 12) {
-            mFiat[mo]   += safe.fiat?.totalUsd || 0;
-            mCripto[mo] += parseFloat(safe.metrics.total) || 0;
+            mFiat[mo] += safe.frozenData.fiatUsd2026 != null ? safe.frozenData.fiatUsd2026 : (safe.fiat?.totalUsd || 0);
+            mCripto[mo] += safe.frozenData.criptoUsd2026 != null ? safe.frozenData.criptoUsd2026 : parseFloat(safe.metrics.total || 0);
           }
         } catch(e) {}
       } else {
-        // Activo: fiat por tx individual, cripto por transfer
+        // Activo: filtrar por mes y año reales
         const sf = fiatData[safe.name];
         (sf?.txs || []).forEach(tx => {
           try {
             const f = String(tx.fecha || ''); let yr, mo;
             if (f.includes('/')) { const p = f.split('/'); yr = p[2]; mo = parseInt(p[1]); }
-            else { yr = f.slice(0, 4); mo = parseInt(f.slice(5, 7)); }
-            if (yr === '2026' && mo >= 1 && mo <= 12) mFiat[mo] += (tx.importe || 0) * EUR_USD;
+            else { yr = f.slice(0,4); mo = parseInt(f.slice(5,7)); }
+            if (yr === '2026' && mo >= 1 && mo <= 12) mFiat[mo] += (tx.importe||0) * EUR_USD;
           } catch(e) {}
         });
         (safe.transfers || []).forEach(tx => {
-          try { if (tx.timestamp.getFullYear() === 2026) mCripto[tx.timestamp.getMonth() + 1] += tx.value || 0; } catch(e) {}
+          try { if (tx.timestamp.getFullYear() === 2026) mCripto[tx.timestamp.getMonth()+1] += tx.value||0; } catch(e) {}
         });
       }
     });
-    let ytdGoal=0,ytdReal=0;
-    const rows=BUDGET_2026.map((b,i)=>{
-      const mo=i+1,real=mFiat[mo]+mCripto[mo],hasPassed=i<=nowMo;
-      if(hasPassed){ytdGoal+=b.goal;ytdReal+=real;}
-      return{...b,real:hasPassed?real:null,pctVal:hasPassed&&b.goal>0?(real/b.goal)*100:null,gap:hasPassed?b.goal-real:null,onTrack:hasPassed&&real>=b.goal};
+
+    let ytdGoal = 0, ytdReal = 0;
+    const rows = BUDGET_2026.map((b, i) => {
+      const mo = i+1, real = mFiat[mo] + mCripto[mo], hasPassed = i <= nowMo;
+      if (hasPassed) { ytdGoal += b.goal; ytdReal += real; }
+      return { ...b, real: hasPassed?real:null, pctVal: hasPassed&&b.goal>0?(real/b.goal)*100:null, gap: hasPassed?b.goal-real:null, onTrack: hasPassed&&real>=b.goal };
     });
-    const ytdGap=ytdGoal-ytdReal,ytdPct=ytdGoal>0?(ytdReal/ytdGoal)*100:0;
-    return(
-      <div className="card" style={{padding:20,marginTop:20}}>
-        <div style={{fontSize:'0.78em',color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:16}}>🎯 Budget 2026 — Real vs Goal por Mes</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10,marginBottom:20}}>
+    const ytdGap = ytdGoal - ytdReal, ytdPct = ytdGoal > 0 ? (ytdReal/ytdGoal)*100 : 0;
+
+    return (
+      <div className="card" style={{ padding:20, marginTop:20 }}>
+        <div style={{ fontSize:'0.78em', color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:16 }}>🎯 Budget 2026 — Real vs Goal por Mes</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))', gap:10, marginBottom:20 }}>
           {[
-            {label:'Real YTD',value:fmt(ytdReal),color:'#00d4aa',sub:'Captado en 2026'},
-            {label:'Goal YTD',value:fmt(ytdGoal),color:'#818cf8',sub:'Objetivo acumulado'},
-            {label:'% YTD',value:ytdPct.toFixed(1)+'%',color:ytdPct>=100?'#00d4aa':ytdPct>=80?'#fb923c':'#ef4444',sub:ytdPct>=100?'✅ On track':'⚠️ Por debajo'},
-            {label:'Gap YTD',value:(ytdGap<=0?'+':'-')+fmt(Math.abs(ytdGap)),color:ytdGap<=0?'#00d4aa':'#f472b6',sub:ytdGap<=0?'Superado':'Pendiente'},
+            { label:'Real YTD', value:fmt(ytdReal), color:'#00d4aa', sub:'Captado en 2026' },
+            { label:'Goal YTD', value:fmt(ytdGoal), color:'#818cf8', sub:'Objetivo acumulado' },
+            { label:'% YTD', value:ytdPct.toFixed(1)+'%', color:ytdPct>=100?'#00d4aa':ytdPct>=80?'#fb923c':'#ef4444', sub:ytdPct>=100?'✅ On track':'⚠️ Por debajo' },
+            { label:'Gap YTD', value:(ytdGap<=0?'+':'-')+fmt(Math.abs(ytdGap)), color:ytdGap<=0?'#00d4aa':'#f472b6', sub:ytdGap<=0?'Superado':'Pendiente' },
           ].map((k,i)=>(
-            <div key={i} style={{background:'#0f172a',borderRadius:10,padding:'14px 16px',borderLeft:'3px solid '+k.color}}>
-              <div style={{fontSize:'0.72em',color:'#64748b',textTransform:'uppercase',marginBottom:6}}>{k.label}</div>
-              <div style={{fontSize:'1.4em',fontWeight:700,color:k.color}}>{k.value}</div>
-              <div style={{fontSize:'0.72em',color:'#475569',marginTop:3}}>{k.sub}</div>
+            <div key={i} style={{ background:'#0f172a', borderRadius:10, padding:'14px 16px', borderLeft:'3px solid '+k.color }}>
+              <div style={{ fontSize:'0.72em', color:'#64748b', textTransform:'uppercase', marginBottom:6 }}>{k.label}</div>
+              <div style={{ fontSize:'1.4em', fontWeight:700, color:k.color }}>{k.value}</div>
+              <div style={{ fontSize:'0.72em', color:'#475569', marginTop:3 }}>{k.sub}</div>
             </div>
           ))}
         </div>
         <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={rows} barGap={4} margin={{top:5,right:10,left:10,bottom:5}}>
+          <BarChart data={rows} barGap={4} margin={{ top:5, right:10, left:10, bottom:5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false}/>
-            <XAxis dataKey="mes" tick={{fill:'#64748b',fontSize:12}} axisLine={false} tickLine={false}/>
-            <YAxis tickFormatter={v=>'$'+(v>=1000000?(v/1000000).toFixed(1)+'M':(v/1000).toFixed(0)+'K')} tick={{fill:'#64748b',fontSize:11}} axisLine={false} tickLine={false}/>
-            <Tooltip contentStyle={{background:'#1e293b',border:'1px solid #334155',borderRadius:8,fontSize:12,color:'#e2e8f0'}} formatter={(v,name)=>['$'+Math.round(v).toLocaleString('en-US'),name==='goal'?'🎯 Goal':'✅ Real']} labelStyle={{color:'#94a3b8'}}/>
-            <Legend formatter={v=>v==='goal'?'🎯 Goal mensual':'✅ Real captado'} wrapperStyle={{fontSize:12,color:'#94a3b8'}}/>
+            <XAxis dataKey="mes" tick={{ fill:'#64748b', fontSize:12 }} axisLine={false} tickLine={false}/>
+            <YAxis tickFormatter={v=>'$'+(v>=1000000?(v/1000000).toFixed(1)+'M':(v/1000).toFixed(0)+'K')} tick={{ fill:'#64748b', fontSize:11 }} axisLine={false} tickLine={false}/>
+            <Tooltip contentStyle={{ background:'#1e293b', border:'1px solid #334155', borderRadius:8, fontSize:12, color:'#e2e8f0' }} formatter={(v,name)=>['$'+Math.round(v).toLocaleString('en-US'),name==='goal'?'🎯 Goal':'✅ Real']} labelStyle={{ color:'#94a3b8' }}/>
+            <Legend formatter={v=>v==='goal'?'🎯 Goal mensual':'✅ Real captado'} wrapperStyle={{ fontSize:12, color:'#94a3b8' }}/>
             <Bar dataKey="goal" name="goal" fill="#334155" radius={[4,4,0,0]}/>
             <Bar dataKey="real" name="real" radius={[4,4,0,0]}>
               {rows.map((r,i)=><Cell key={i} fill={r.real===null?'transparent':r.onTrack?'#00d4aa':'#fb923c'}/>)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.84em',marginTop:16}}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'0.84em', marginTop:16 }}>
           <thead>
-            <tr style={{color:'#475569',fontSize:'0.82em',textTransform:'uppercase'}}>
-              {['Mes','Goal Mes','Real Mes','% Cumpl.','Gap','Estado'].map((h,i)=><th key={i} style={{padding:'7px 10px',textAlign:i>=2?'right':'left',fontWeight:500,borderBottom:'1px solid #1e293b'}}>{h}</th>)}
+            <tr style={{ color:'#475569', fontSize:'0.82em', textTransform:'uppercase' }}>
+              {['Mes','Goal Mes','Real Mes','% Cumpl.','Gap','Estado'].map((h,i)=><th key={i} style={{ padding:'7px 10px', textAlign:i>=2?'right':'left', fontWeight:500, borderBottom:'1px solid #1e293b' }}>{h}</th>)}
             </tr>
           </thead>
           <tbody>
             {rows.map((r,i)=>(
-              <tr key={i} className="row" style={{borderBottom:'1px solid #0f172a',opacity:r.real===null?0.28:1}}>
-                <td style={{padding:'8px 10px',color:'#f1f5f9',fontWeight:600}}>{r.label}</td>
-                <td style={{padding:'8px 10px',color:'#818cf8'}}>{fmt(r.goal)}</td>
-                <td style={{padding:'8px 10px',textAlign:'right',color:r.real!==null?'#00d4aa':'#334155',fontWeight:700}}>{r.real!==null?fmt(r.real):'—'}</td>
-                <td style={{padding:'8px 10px',textAlign:'right'}}>{r.pctVal!==null?<span style={{color:r.pctVal>=100?'#00d4aa':r.pctVal>=80?'#fb923c':'#ef4444',fontWeight:700}}>{r.pctVal.toFixed(1)}%</span>:'—'}</td>
-                <td style={{padding:'8px 10px',textAlign:'right',color:r.gap===null?'#334155':r.gap<=0?'#00d4aa':'#f472b6'}}>{r.gap===null?'—':(r.gap<=0?'+':'-')+fmt(Math.abs(r.gap))}</td>
-                <td style={{padding:'8px 10px',textAlign:'right'}}>{r.real===null?<span style={{color:'#334155'}}>Pendiente</span>:r.onTrack?<span style={{color:'#00d4aa'}}>✅ On track</span>:<span style={{color:'#fb923c'}}>⚠️ Below</span>}</td>
+              <tr key={i} className="row" style={{ borderBottom:'1px solid #0f172a', opacity:r.real===null?0.28:1 }}>
+                <td style={{ padding:'8px 10px', color:'#f1f5f9', fontWeight:600 }}>{r.label}</td>
+                <td style={{ padding:'8px 10px', color:'#818cf8' }}>{fmt(r.goal)}</td>
+                <td style={{ padding:'8px 10px', textAlign:'right', color:r.real!==null?'#00d4aa':'#334155', fontWeight:700 }}>{r.real!==null?fmt(r.real):'—'}</td>
+                <td style={{ padding:'8px 10px', textAlign:'right' }}>{r.pctVal!==null?<span style={{ color:r.pctVal>=100?'#00d4aa':r.pctVal>=80?'#fb923c':'#ef4444', fontWeight:700 }}>{r.pctVal.toFixed(1)}%</span>:'—'}</td>
+                <td style={{ padding:'8px 10px', textAlign:'right', color:r.gap===null?'#334155':r.gap<=0?'#00d4aa':'#f472b6' }}>{r.gap===null?'—':(r.gap<=0?'+':'-')+fmt(Math.abs(r.gap))}</td>
+                <td style={{ padding:'8px 10px', textAlign:'right' }}>{r.real===null?<span style={{ color:'#334155' }}>Pendiente</span>:r.onTrack?<span style={{ color:'#00d4aa' }}>✅ On track</span>:<span style={{ color:'#fb923c' }}>⚠️ Below</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -738,18 +756,18 @@ export default function App() {
   };
 
   if (!storageReady) return (
-    <div style={{minHeight:'100vh',background:'#0f172a',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'monospace'}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{width:48,height:48,border:'3px solid #1e293b',borderTop:'3px solid #00d4aa',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 20px'}}/>
-        <div style={{color:'#00d4aa',fontWeight:600}}>Sincronizando configuración...</div>
-        <div style={{color:'#475569',fontSize:'0.8em',marginTop:8}}>Cargando Safes desde JSONbin</div>
+    <div style={{ minHeight:'100vh', background:'#0f172a', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'monospace' }}>
+      <div style={{ textAlign:'center' }}>
+        <div style={{ width:48, height:48, border:'3px solid #1e293b', borderTop:'3px solid #00d4aa', borderRadius:'50%', animation:'spin 0.8s linear infinite', margin:'0 auto 20px' }}/>
+        <div style={{ color:'#00d4aa', fontWeight:600 }}>Sincronizando configuración...</div>
+        <div style={{ color:'#475569', fontSize:'0.8em', marginTop:8 }}>Cargando Safes desde JSONbin</div>
         <style>{`@keyframes spin{to{transform:rotate(360deg);}}`}</style>
       </div>
     </div>
   );
 
   return (
-    <div style={{minHeight:'100vh',background:'#0f172a',color:'#e2e8f0',fontFamily:'monospace'}}>
+    <div style={{ minHeight:'100vh', background:'#0f172a', color:'#e2e8f0', fontFamily:'monospace' }}>
       <style>{`
         *{box-sizing:border-box;}
         .card{background:#1e293b;border:1px solid #334155;border-radius:12px;}
@@ -763,8 +781,7 @@ export default function App() {
         details summary{cursor:pointer;list-style:none;}
         details summary::-webkit-details-marker{display:none;}
         input:focus{border-color:#00d4aa44!important;}
-        .so-overlay{position:absolute;inset:0;border-radius:12px;pointer-events:none;
-          background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(245,158,11,0.04) 18px,rgba(245,158,11,0.04) 20px);}
+        .so-overlay{position:absolute;inset:0;border-radius:12px;pointer-events:none;background:repeating-linear-gradient(45deg,transparent,transparent 18px,rgba(245,158,11,0.04) 18px,rgba(245,158,11,0.04) 20px);}
       `}</style>
 
       {showAdmin && (
@@ -784,65 +801,64 @@ export default function App() {
       )}
 
       {/* HEADER */}
-      <div style={{borderBottom:'1px solid #1e293b',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12,position:'sticky',top:0,background:'#0f172a',zIndex:10}}>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <img src={LOGO_SRC} alt="Reental" style={{height:32,width:'auto',borderRadius:8}}/>
+      <div style={{ borderBottom:'1px solid #1e293b', padding:'16px 24px', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:12, position:'sticky', top:0, background:'#0f172a', zIndex:10 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <img src={LOGO_SRC} alt="Reental" style={{ height:32, width:'auto', borderRadius:8 }}/>
           <div>
-            <div style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.1em'}}>Raised Capital</div>
-            <div style={{fontSize:'0.78em',color:'#64748b'}}>
+            <div style={{ fontWeight:700, color:'#f1f5f9', fontSize:'1.1em' }}>Raised Capital</div>
+            <div style={{ fontSize:'0.78em', color:'#64748b' }}>
               Polygon · {activeCount} activos{soldOutCount>0?` · ${soldOutCount} 🔒`:''} · Fiat + Crypto
-              {storageError?<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Error sync</span>:<span style={{color:'#00d4aa',marginLeft:8}}>· 🌐 JSONbin</span>}
-              {fiatSource==='sheet'&&fiatLastUpdate&&<span style={{color:'#00d4aa',marginLeft:8}}>· 📊 Sheet {fiatLastUpdate.toLocaleTimeString()}</span>}
-              {fiatSource==='fallback'&&<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Fiat local</span>}
+              {storageError?<span style={{ color:'#fb923c', marginLeft:8 }}>· ⚠️ Error sync</span>:<span style={{ color:'#00d4aa', marginLeft:8 }}>· 🌐 JSONbin</span>}
+              {fiatSource==='sheet'&&fiatLastUpdate&&<span style={{ color:'#00d4aa', marginLeft:8 }}>· 📊 Sheet {fiatLastUpdate.toLocaleTimeString()}</span>}
+              {fiatSource==='fallback'&&<span style={{ color:'#fb923c', marginLeft:8 }}>· ⚠️ Fiat local</span>}
             </div>
           </div>
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-          {lastUpdate&&<span style={{fontSize:'0.75em',color:'#475569'}}>{lastUpdate.toLocaleTimeString()} · {loadTime}s</span>}
-          <button onClick={()=>setShowAdmin(true)} style={{background:'#1e293b',color:'#818cf8',border:'1px solid #334155',borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>⚙️ Admin</button>
+        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+          {lastUpdate&&<span style={{ fontSize:'0.75em', color:'#475569' }}>{lastUpdate.toLocaleTimeString()} · {loadTime}s</span>}
+          <button onClick={()=>setShowAdmin(true)} style={{ background:'#1e293b', color:'#818cf8', border:'1px solid #334155', borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>⚙️ Admin</button>
           {data&&<>
-            <button onClick={loadAll} disabled={loading} style={{background:'#1e293b',color:'#00d4aa',border:'1px solid #00d4aa44',borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>{loading?'⏳':'↺ Refresh'}</button>
-            <button onClick={()=>setAuto(!auto)} style={{background:auto?'#00d4aa18':'#1e293b',color:auto?'#00d4aa':'#64748b',border:'1px solid '+(auto?'#00d4aa':'#334155'),borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>{auto?'⏸ Auto ON':'▶ Auto 60s'}</button>
-            <button onClick={()=>refreshFiat(safes)} disabled={fiatLoading} style={{background:fiatLoading?'#0f172a':fiatSource==='sheet'?'#00d4aa18':'#fb923c18',color:fiatLoading?'#475569':fiatSource==='sheet'?'#00d4aa':'#fb923c',border:'1px solid '+(fiatSource==='sheet'?'#00d4aa44':'#fb923c44'),borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:fiatLoading?'default':'pointer',fontFamily:'monospace'}}>{fiatLoading?'⟳ Fiat...':'📊 Fiat Sheet'}</button>
+            <button onClick={loadAll} disabled={loading} style={{ background:'#1e293b', color:'#00d4aa', border:'1px solid #00d4aa44', borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>{loading?'⏳':'↺ Refresh'}</button>
+            <button onClick={()=>setAuto(!auto)} style={{ background:auto?'#00d4aa18':'#1e293b', color:auto?'#00d4aa':'#64748b', border:'1px solid '+(auto?'#00d4aa':'#334155'), borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:'pointer', fontFamily:'monospace' }}>{auto?'⏸ Auto ON':'▶ Auto 60s'}</button>
+            <button onClick={()=>refreshFiat(safes)} disabled={fiatLoading} style={{ background:fiatLoading?'#0f172a':fiatSource==='sheet'?'#00d4aa18':'#fb923c18', color:fiatLoading?'#475569':fiatSource==='sheet'?'#00d4aa':'#fb923c', border:'1px solid '+(fiatSource==='sheet'?'#00d4aa44':'#fb923c44'), borderRadius:7, padding:'6px 14px', fontSize:'0.82em', fontWeight:600, cursor:fiatLoading?'default':'pointer', fontFamily:'monospace' }}>{fiatLoading?'⟳ Fiat...':'📊 Fiat Sheet'}</button>
           </>}
         </div>
       </div>
 
-      <div style={{padding:'24px',maxWidth:1400,margin:'0 auto'}}>
-
+      <div style={{ padding:'24px', maxWidth:1400, margin:'0 auto' }}>
         {!data&&!loading&&(
-          <div className="fade" style={{maxWidth:520,margin:'60px auto',textAlign:'center'}}>
-            <div style={{fontSize:'3em',marginBottom:16}}>🔐</div>
-            <div style={{fontWeight:700,fontSize:'1.5em',color:'#f1f5f9',marginBottom:10}}>Dashboard listo</div>
-            <p style={{color:'#64748b',fontSize:'0.95em',lineHeight:1.8,marginBottom:32}}>
+          <div className="fade" style={{ maxWidth:520, margin:'60px auto', textAlign:'center' }}>
+            <div style={{ fontSize:'3em', marginBottom:16 }}>🔐</div>
+            <div style={{ fontWeight:700, fontSize:'1.5em', color:'#f1f5f9', marginBottom:10 }}>Dashboard listo</div>
+            <p style={{ color:'#64748b', fontSize:'0.95em', lineHeight:1.8, marginBottom:32 }}>
               {activeCount} safe{activeCount!==1?'s':''} activo{activeCount!==1?'s':''} consultarán blockchain en tiempo real.
-              {soldOutCount>0&&<span style={{color:'#f59e0b'}}> {soldOutCount} Sold Out con datos congelados.</span>}
+              {soldOutCount>0&&<span style={{ color:'#f59e0b' }}> {soldOutCount} Sold Out con datos congelados.</span>}
             </p>
-            <div className="card" style={{padding:'14px 18px',marginBottom:28,textAlign:'left'}}>
+            <div className="card" style={{ padding:'14px 18px', marginBottom:28, textAlign:'left' }}>
               {safes.map((s,i)=>(
-                <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:i<safes.length-1?'1px solid #334155':'none'}}>
-                  <div style={{width:7,height:7,borderRadius:'50%',background:s.soldOut?'#f59e0b':COLOR_PALETTE[i%COLOR_PALETTE.length],flexShrink:0}}/>
-                  <span style={{color:s.soldOut?'#f59e0b':COLOR_PALETTE[i%COLOR_PALETTE.length],fontWeight:700,fontSize:'0.9em',minWidth:56}}>{s.name}</span>
-                  {s.soldOut?<SoldOutBadge/>:<span style={{color:'#475569',fontSize:'0.75em',wordBreak:'break-all'}}>{s.address}</span>}
+                <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:i<safes.length-1?'1px solid #334155':'none' }}>
+                  <div style={{ width:7, height:7, borderRadius:'50%', background:s.soldOut?'#f59e0b':COLOR_PALETTE[i%COLOR_PALETTE.length], flexShrink:0 }}/>
+                  <span style={{ color:s.soldOut?'#f59e0b':COLOR_PALETTE[i%COLOR_PALETTE.length], fontWeight:700, fontSize:'0.9em', minWidth:56 }}>{s.name}</span>
+                  {s.soldOut?<SoldOutBadge/>:<span style={{ color:'#475569', fontSize:'0.75em', wordBreak:'break-all' }}>{s.address}</span>}
                 </div>
               ))}
             </div>
-            <button onClick={loadAll} style={{background:'#00d4aa',color:'#0f172a',border:'none',borderRadius:9,padding:'14px 40px',fontSize:'1em',fontWeight:700,cursor:'pointer',fontFamily:'monospace'}}>🚀 Cargar Dashboard</button>
-            <p style={{color:'#334155',fontSize:'0.75em',marginTop:12}}>Tiempo estimado: {activeCount*10}–{activeCount*15}s (solo safes activos)</p>
+            <button onClick={loadAll} style={{ background:'#00d4aa', color:'#0f172a', border:'none', borderRadius:9, padding:'14px 40px', fontSize:'1em', fontWeight:700, cursor:'pointer', fontFamily:'monospace' }}>🚀 Cargar Dashboard</button>
+            <p style={{ color:'#334155', fontSize:'0.75em', marginTop:12 }}>Tiempo estimado: {activeCount*10}–{activeCount*15}s (solo safes activos)</p>
           </div>
         )}
 
         {loading&&(
-          <div style={{textAlign:'center',padding:'80px 0'}}>
-            <div style={{width:48,height:48,border:'3px solid #1e293b',borderTop:'3px solid #00d4aa',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 20px'}}/>
-            <div style={{color:'#00d4aa',fontWeight:600,fontSize:'0.9em'}}>Consultando blockchain...</div>
-            <div style={{color:'#475569',fontSize:'0.82em',marginTop:8}}>{msg}</div>
+          <div style={{ textAlign:'center', padding:'80px 0' }}>
+            <div style={{ width:48, height:48, border:'3px solid #1e293b', borderTop:'3px solid #00d4aa', borderRadius:'50%', animation:'spin 0.8s linear infinite', margin:'0 auto 20px' }}/>
+            <div style={{ color:'#00d4aa', fontWeight:600, fontSize:'0.9em' }}>Consultando blockchain...</div>
+            <div style={{ color:'#475569', fontSize:'0.82em', marginTop:8 }}>{msg}</div>
           </div>
         )}
 
         {data&&!loading&&(
           <div className="fade">
-            <div style={{display:'flex',gap:8,marginBottom:24,flexWrap:'wrap'}}>
+            <div style={{ display:'flex', gap:8, marginBottom:24, flexWrap:'wrap' }}>
               {[['consolidado','📊 Consolidado'],['cripto','🔗 Crypto USDT'],['fiat','🏦 Fiat EUR'],['2026','📅 2026']].map(([id,label])=>(
                 <button key={id} className={'tab '+(activeTab===id?'tab-on':'tab-off')} onClick={()=>setActiveTab(id)}>{label}</button>
               ))}
@@ -850,76 +866,81 @@ export default function App() {
 
             {/* ── CONSOLIDADO ── */}
             {activeTab==='consolidado'&&(()=>{
-              const fiatUSD=fTotals.totalUsd,criptoUSD=parseFloat(cTotals.received),totalUSD=fiatUSD+criptoUSD;
-              const pctFiat=totalUSD>0?(fiatUSD/totalUSD)*100:0,pctCripto=totalUSD>0?(criptoUSD/totalUSD)*100:0;
-              return(
+              const fiatUSD=fTotals.totalUsd, criptoUSD=parseFloat(cTotals.received), totalUSD=fiatUSD+criptoUSD;
+              const pctFiat=totalUSD>0?(fiatUSD/totalUSD)*100:0, pctCripto=totalUSD>0?(criptoUSD/totalUSD)*100:0;
+              return (
                 <div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:20}}>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12, marginBottom:20 }}>
                     <KPI label="Capital Total (USD)" value={fmt(totalUSD)} sub="Fiat + Cripto unificado" color="#00d4aa"/>
                     <KPI label="Fiat Captado" value={fmt(fiatUSD)} sub={'€'+fTotals.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0})+' → USD'} color="#818cf8"/>
                     <KPI label="Cripto USDT" value={fmt(criptoUSD)} sub="Recibido on-chain" color="#fb923c"/>
                     <KPI label="Total Inversores" value={fTotals.inversores.toLocaleString()} sub={cTotals.txs+' TXs · '+activeCount+' activos / '+soldOutCount+' 🔒'} color="#f472b6"/>
                   </div>
-                  <div className="card" style={{padding:20,marginBottom:20}}>
-                    <div style={{fontSize:'0.78em',color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:16}}>Mix de Captación — EUR/USD: {EUR_USD} · Todo en USD</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:20}}>
-                      {[{label:'🏦 Fiat (EUR→USD)',value:pctFiat,amount:fmt(fiatUSD),sub:'€'+fTotals.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0}),color:'#818cf8'},{label:'🔗 Cripto (USDT)',value:pctCripto,amount:fmt(criptoUSD),sub:cTotals.txs+' transacciones',color:'#fb923c'}].map((item,i)=>(
-                        <div key={i} style={{background:'#0f172a',borderRadius:10,padding:'18px 20px'}}>
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                            <span style={{fontSize:'0.9em',color:'#94a3b8'}}>{item.label}</span>
-                            <span style={{fontSize:'2.2em',fontWeight:700,color:item.color}}>{pct(item.value)}</span>
+                  <div className="card" style={{ padding:20, marginBottom:20 }}>
+                    <div style={{ fontSize:'0.78em', color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:16 }}>Mix de Captación — EUR/USD: {EUR_USD} · Todo en USD</div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:20 }}>
+                      {[
+                        { label:'🏦 Fiat (EUR→USD)', value:pctFiat, amount:fmt(fiatUSD), sub:'€'+fTotals.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0}), color:'#818cf8' },
+                        { label:'🔗 Cripto (USDT)', value:pctCripto, amount:fmt(criptoUSD), sub:cTotals.txs+' transacciones', color:'#fb923c' },
+                      ].map((item,i)=>(
+                        <div key={i} style={{ background:'#0f172a', borderRadius:10, padding:'18px 20px' }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                            <span style={{ fontSize:'0.9em', color:'#94a3b8' }}>{item.label}</span>
+                            <span style={{ fontSize:'2.2em', fontWeight:700, color:item.color }}>{pct(item.value)}</span>
                           </div>
-                          <div style={{background:'#1e293b',borderRadius:4,height:8,marginBottom:10}}><div style={{background:item.color,borderRadius:4,height:8,width:pct(item.value),transition:'width 0.6s ease'}}/></div>
-                          <div style={{fontSize:'0.88em',color:'#f1f5f9',fontWeight:700}}>{item.amount}</div>
-                          <div style={{fontSize:'0.72em',color:'#475569',marginTop:3}}>{item.sub}</div>
+                          <div style={{ background:'#1e293b', borderRadius:4, height:8, marginBottom:10 }}><div style={{ background:item.color, borderRadius:4, height:8, width:pct(item.value), transition:'width 0.6s ease' }}/></div>
+                          <div style={{ fontSize:'0.88em', color:'#f1f5f9', fontWeight:700 }}>{item.amount}</div>
+                          <div style={{ fontSize:'0.72em', color:'#475569', marginTop:3 }}>{item.sub}</div>
                         </div>
                       ))}
                     </div>
-                    <div style={{background:'#0f172a',borderRadius:8,padding:'14px 16px'}}>
-                      <div style={{display:'flex',borderRadius:6,overflow:'hidden',height:28,marginBottom:10}}>
-                        <div style={{background:'#818cf8',width:pct(pctFiat),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.72em',fontWeight:700,color:'#0f172a',transition:'width 0.6s ease'}}>{pctFiat>10?pct(pctFiat)+' Fiat':''}</div>
-                        <div style={{background:'#fb923c',width:pct(pctCripto),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.72em',fontWeight:700,color:'#0f172a',transition:'width 0.6s ease'}}>{pctCripto>10?pct(pctCripto)+' Cripto':''}</div>
+                    <div style={{ background:'#0f172a', borderRadius:8, padding:'14px 16px' }}>
+                      <div style={{ display:'flex', borderRadius:6, overflow:'hidden', height:28, marginBottom:10 }}>
+                        <div style={{ background:'#818cf8', width:pct(pctFiat), display:'flex', alignItems:'center', justifyContent:'center', fontSize:'0.72em', fontWeight:700, color:'#0f172a', transition:'width 0.6s ease' }}>{pctFiat>10?pct(pctFiat)+' Fiat':''}</div>
+                        <div style={{ background:'#fb923c', width:pct(pctCripto), display:'flex', alignItems:'center', justifyContent:'center', fontSize:'0.72em', fontWeight:700, color:'#0f172a', transition:'width 0.6s ease' }}>{pctCripto>10?pct(pctCripto)+' Cripto':''}</div>
                       </div>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <span style={{fontSize:'0.82em',color:'#94a3b8'}}>Total: <strong style={{color:'#00d4aa',fontSize:'1.1em'}}>{fmt(totalUSD)}</strong></span>
-                        <div style={{display:'flex',gap:14}}>
-                          <span style={{fontSize:'0.75em',color:'#818cf8'}}>■ Fiat {pct(pctFiat)}</span>
-                          <span style={{fontSize:'0.75em',color:'#fb923c'}}>■ Cripto {pct(pctCripto)}</span>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <span style={{ fontSize:'0.82em', color:'#94a3b8' }}>Total: <strong style={{ color:'#00d4aa', fontSize:'1.1em' }}>{fmt(totalUSD)}</strong></span>
+                        <div style={{ display:'flex', gap:14 }}>
+                          <span style={{ fontSize:'0.75em', color:'#818cf8' }}>■ Fiat {pct(pctFiat)}</span>
+                          <span style={{ fontSize:'0.75em', color:'#fb923c' }}>■ Cripto {pct(pctCripto)}</span>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))',gap:12}}>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:12 }}>
                     {data.map((safe,idx)=>{
-                      const isSO=!!safe.soldOut;
-                      const bc=isSO?'#f59e0b':COLORS[idx];
-                      const safeFiatUSD=safe.fiat?.totalUsd||0,safeCriptoUSD=parseFloat(safe.metrics.total),safeTotalUSD=safeFiatUSD+safeCriptoUSD;
-                      const safePctFiat=safeTotalUSD>0?(safeFiatUSD/safeTotalUSD)*100:0,safePctCripto=safeTotalUSD>0?(safeCriptoUSD/safeTotalUSD)*100:0;
-                      return(
-                        <div key={idx} className="card" style={{padding:20,borderTop:'3px solid '+bc,position:'relative',overflow:'hidden'}}>
+                      const isSO=!!safe.soldOut, bc=isSO?'#f59e0b':COLORS[idx];
+                      const safeFiatUSD=safe.fiat?.totalUsd||0, safeCriptoUSD=parseFloat(safe.metrics.total), safeTotalUSD=safeFiatUSD+safeCriptoUSD;
+                      const safePctFiat=safeTotalUSD>0?(safeFiatUSD/safeTotalUSD)*100:0, safePctCripto=safeTotalUSD>0?(safeCriptoUSD/safeTotalUSD)*100:0;
+                      return (
+                        <div key={idx} className="card" style={{ padding:20, borderTop:'3px solid '+bc, position:'relative', overflow:'hidden' }}>
                           {isSO&&<div className="so-overlay"/>}
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
-                            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                              <div style={{width:9,height:9,borderRadius:'50%',background:bc}}/>
-                              <span style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.05em'}}>{safe.name}</span>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                              <div style={{ width:9, height:9, borderRadius:'50%', background:bc }}/>
+                              <span style={{ fontWeight:700, color:'#f1f5f9', fontSize:'1.05em' }}>{safe.name}</span>
                               {isSO&&<SoldOutBadge/>}
                             </div>
-                            <div style={{textAlign:'right'}}>
-                              <div style={{fontSize:'1.2em',fontWeight:700,color:bc}}>{fmt(safeTotalUSD)}</div>
-                              <div style={{fontSize:'0.75em',color:'#475569'}}>{pct(totalUSD>0?(safeTotalUSD/totalUSD)*100:0)} del total</div>
-                              {isSO&&safe.frozenData&&<div style={{fontSize:'0.65em',color:'#f59e0b66',marginTop:2}}>🔒 {safe.frozenData.date}</div>}
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:'1.2em', fontWeight:700, color:bc }}>{fmt(safeTotalUSD)}</div>
+                              <div style={{ fontSize:'0.75em', color:'#475569' }}>{pct(totalUSD>0?(safeTotalUSD/totalUSD)*100:0)} del total</div>
+                              {isSO&&safe.frozenData&&<div style={{ fontSize:'0.65em', color:'#f59e0b66', marginTop:2 }}>🔒 {safe.frozenData.date}</div>}
                             </div>
                           </div>
-                          <div style={{display:'flex',borderRadius:4,overflow:'hidden',height:20,marginBottom:12}}>
-                            <div style={{background:'#818cf8',width:pct(safePctFiat),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.65em',fontWeight:700,color:'#0f172a'}}>{safePctFiat>15?pct(safePctFiat):''}</div>
-                            <div style={{background:isSO?'#fb923c66':'#fb923c',width:pct(safePctCripto),display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.65em',fontWeight:700,color:'#0f172a'}}>{safePctCripto>15?pct(safePctCripto):''}</div>
+                          <div style={{ display:'flex', borderRadius:4, overflow:'hidden', height:20, marginBottom:12 }}>
+                            <div style={{ background:'#818cf8', width:pct(safePctFiat), display:'flex', alignItems:'center', justifyContent:'center', fontSize:'0.65em', fontWeight:700, color:'#0f172a' }}>{safePctFiat>15?pct(safePctFiat):''}</div>
+                            <div style={{ background:isSO?'#fb923c66':'#fb923c', width:pct(safePctCripto), display:'flex', alignItems:'center', justifyContent:'center', fontSize:'0.65em', fontWeight:700, color:'#0f172a' }}>{safePctCripto>15?pct(safePctCripto):''}</div>
                           </div>
-                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                            {[{label:'🏦 Fiat USD',value:fmt(safeFiatUSD),sub:(safe.fiat?.count||0)+' inversores · '+pct(safePctFiat),color:'#818cf8'},{label:'🔗 Cripto USD',value:fmt(safeCriptoUSD),sub:safe.metrics.count+' txs · '+pct(safePctCripto),color:isSO?'#fb923c88':'#fb923c'}].map((m,i)=>(
-                              <div key={i} style={{background:'#0f172a',borderRadius:8,padding:'10px 12px'}}>
-                                <div style={{fontSize:'0.72em',color:'#64748b',textTransform:'uppercase',marginBottom:4}}>{m.label}</div>
-                                <div style={{fontSize:'1.05em',fontWeight:700,color:m.color}}>{m.value}</div>
-                                <div style={{fontSize:'0.72em',color:'#475569',marginTop:2}}>{m.sub}</div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                            {[
+                              { label:'🏦 Fiat USD', value:fmt(safeFiatUSD), sub:(safe.fiat?.count||0)+' inversores · '+pct(safePctFiat), color:'#818cf8' },
+                              { label:'🔗 Cripto USD', value:fmt(safeCriptoUSD), sub:safe.metrics.count+' txs · '+pct(safePctCripto), color:isSO?'#fb923c88':'#fb923c' },
+                            ].map((m,i)=>(
+                              <div key={i} style={{ background:'#0f172a', borderRadius:8, padding:'10px 12px' }}>
+                                <div style={{ fontSize:'0.72em', color:'#64748b', textTransform:'uppercase', marginBottom:4 }}>{m.label}</div>
+                                <div style={{ fontSize:'1.05em', fontWeight:700, color:m.color }}>{m.value}</div>
+                                <div style={{ fontSize:'0.72em', color:'#475569', marginTop:2 }}>{m.sub}</div>
                               </div>
                             ))}
                           </div>
@@ -934,54 +955,59 @@ export default function App() {
             {/* ── CRIPTO ── */}
             {activeTab==='cripto'&&(
               <div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:20}}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12, marginBottom:20 }}>
                   <KPI label="Balance Total" value={fmt(cTotals.balance)} sub="USDT en todas las Safes" color="#00d4aa"/>
                   <KPI label="Total Recibido" value={fmt(cTotals.received)} sub="Histórico completo" color="#818cf8"/>
                   <KPI label="Transacciones" value={cTotals.txs.toLocaleString()} sub="TXs entrantes" color="#fb923c"/>
                   <KPI label="Activos / Cerrados" value={`${activeCount} / ${soldOutCount}`} sub="Tiempo real vs congelados" color="#f472b6"/>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(440px,1fr))',gap:12}}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(440px,1fr))', gap:12 }}>
                   {data.map((safe,idx)=>{
                     const isSO=!!safe.soldOut;
-                    return(
-                      <div key={idx} className="card" style={{padding:20,borderTop:'3px solid '+(isSO?'#f59e0b':COLORS[idx]),position:'relative',overflow:'hidden'}}>
+                    return (
+                      <div key={idx} className="card" style={{ padding:20, borderTop:'3px solid '+(isSO?'#f59e0b':COLORS[idx]), position:'relative', overflow:'hidden' }}>
                         {isSO&&<div className="so-overlay"/>}
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16,gap:10}}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16, gap:10 }}>
                           <div>
-                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:5,flexWrap:'wrap'}}>
-                              <div style={{width:8,height:8,borderRadius:'50%',background:isSO?'#f59e0b':COLORS[idx]}}/>
-                              <span style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.05em'}}>{safe.name}</span>
-                              {isSO?<SoldOutBadge/>:<span style={{fontSize:'0.65em',padding:'2px 6px',borderRadius:4,background:COLORS[idx]+'22',color:COLORS[idx],fontWeight:600}}>POLYGON</span>}
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
+                              <div style={{ width:8, height:8, borderRadius:'50%', background:isSO?'#f59e0b':COLORS[idx] }}/>
+                              <span style={{ fontWeight:700, color:'#f1f5f9', fontSize:'1.05em' }}>{safe.name}</span>
+                              {isSO?<SoldOutBadge/>:<span style={{ fontSize:'0.65em', padding:'2px 6px', borderRadius:4, background:COLORS[idx]+'22', color:COLORS[idx], fontWeight:600 }}>POLYGON</span>}
                             </div>
-                            <div style={{fontSize:'0.72em',color:'#475569',wordBreak:'break-all'}}>{safe.address}</div>
+                            <div style={{ fontSize:'0.72em', color:'#475569', wordBreak:'break-all' }}>{safe.address}</div>
                           </div>
-                          {!isSO&&<a href={'https://polygonscan.com/address/'+safe.address} target="_blank" rel="noreferrer" style={{background:'#0f172a',color:COLORS[idx],padding:'5px 11px',borderRadius:6,textDecoration:'none',fontSize:'0.75em',fontWeight:600,whiteSpace:'nowrap',border:'1px solid '+COLORS[idx]+'44',flexShrink:0}}>Polygonscan ↗</a>}
+                          {!isSO&&<a href={'https://polygonscan.com/address/'+safe.address} target="_blank" rel="noreferrer" style={{ background:'#0f172a', color:COLORS[idx], padding:'5px 11px', borderRadius:6, textDecoration:'none', fontSize:'0.75em', fontWeight:600, whiteSpace:'nowrap', border:'1px solid '+COLORS[idx]+'44', flexShrink:0 }}>Polygonscan ↗</a>}
                         </div>
-                        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:16}}>
-                          {[{label:'Balance',value:fmt(safe.balance),color:isSO?'#f59e0b':COLORS[idx]},{label:'Recibido',value:fmt(safe.metrics.total),color:'#00d4aa'},{label:'TXs',value:safe.metrics.count.toLocaleString(),color:'#94a3b8'},{label:'Promedio',value:fmt(safe.metrics.average),color:'#64748b'}].map((m,i)=>(
-                            <div key={i} style={{background:'#0f172a',borderRadius:8,padding:'11px 8px',textAlign:'center'}}>
-                              <div style={{fontSize:'0.72em',color:'#475569',textTransform:'uppercase',marginBottom:5}}>{m.label}</div>
-                              <div style={{fontSize:'1em',fontWeight:700,color:m.color}}>{m.value}</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:16 }}>
+                          {[
+                            { label:'Balance', value:fmt(safe.balance), color:isSO?'#f59e0b':COLORS[idx] },
+                            { label:'Recibido', value:fmt(safe.metrics.total), color:'#00d4aa' },
+                            { label:'TXs', value:safe.metrics.count.toLocaleString(), color:'#94a3b8' },
+                            { label:'Promedio', value:fmt(safe.metrics.average), color:'#64748b' },
+                          ].map((m,i)=>(
+                            <div key={i} style={{ background:'#0f172a', borderRadius:8, padding:'11px 8px', textAlign:'center' }}>
+                              <div style={{ fontSize:'0.72em', color:'#475569', textTransform:'uppercase', marginBottom:5 }}>{m.label}</div>
+                              <div style={{ fontSize:'1em', fontWeight:700, color:m.color }}>{m.value}</div>
                             </div>
                           ))}
                         </div>
                         {isSO?(
-                          <div style={{background:'#f59e0b11',border:'1px solid #f59e0b33',borderRadius:8,padding:'10px 14px',fontSize:'0.78em',color:'#f59e0b88',textAlign:'center'}}>
+                          <div style={{ background:'#f59e0b11', border:'1px solid #f59e0b33', borderRadius:8, padding:'10px 14px', fontSize:'0.78em', color:'#f59e0b88', textAlign:'center' }}>
                             🔒 Datos congelados · No consulta Moralis · Cerrado {safe.frozenData?.date||''}
                           </div>
                         ):safe.transfers.length>0&&(
                           <details>
-                            <summary style={{background:'#0f172a',padding:'8px 12px',borderRadius:7,fontSize:'0.8em',color:'#64748b',userSelect:'none'}}>▶ Últimas {Math.min(safe.transfers.length,10)} de {safe.transfers.length} TXs USDT</summary>
-                            <div style={{marginTop:10,overflowX:'auto'}}>
-                              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8em'}}>
-                                <thead><tr style={{color:'#475569',fontSize:'0.88em',textTransform:'uppercase'}}>{['Fecha','Desde','USDT','TX'].map((h,i)=><th key={i} style={{padding:'6px 10px',textAlign:i===2?'right':i===3?'center':'left',fontWeight:500}}>{h}</th>)}</tr></thead>
+                            <summary style={{ background:'#0f172a', padding:'8px 12px', borderRadius:7, fontSize:'0.8em', color:'#64748b', userSelect:'none' }}>▶ Últimas {Math.min(safe.transfers.length,10)} de {safe.transfers.length} TXs USDT</summary>
+                            <div style={{ marginTop:10, overflowX:'auto' }}>
+                              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'0.8em' }}>
+                                <thead><tr style={{ color:'#475569', fontSize:'0.88em', textTransform:'uppercase' }}>{['Fecha','Desde','USDT','TX'].map((h,i)=><th key={i} style={{ padding:'6px 10px', textAlign:i===2?'right':i===3?'center':'left', fontWeight:500 }}>{h}</th>)}</tr></thead>
                                 <tbody>
                                   {safe.transfers.slice(0,10).map((tx,i)=>(
-                                    <tr key={i} className="row" style={{borderBottom:'1px solid #1e293b'}}>
-                                      <td style={{padding:'7px 10px',color:'#94a3b8'}}>{tx.timestamp.toLocaleDateString()}</td>
-                                      <td style={{padding:'7px 10px',color:'#64748b'}}>{tx.from.slice(0,8)}…{tx.from.slice(-4)}</td>
-                                      <td style={{padding:'7px 10px',textAlign:'right',color:'#00d4aa',fontWeight:700}}>+{fmt(tx.value)}</td>
-                                      <td style={{padding:'7px 10px',textAlign:'center'}}><a href={'https://polygonscan.com/tx/'+tx.hash} target="_blank" rel="noreferrer" style={{color:COLORS[idx],textDecoration:'none'}}>↗</a></td>
+                                    <tr key={i} className="row" style={{ borderBottom:'1px solid #1e293b' }}>
+                                      <td style={{ padding:'7px 10px', color:'#94a3b8' }}>{tx.timestamp.toLocaleDateString()}</td>
+                                      <td style={{ padding:'7px 10px', color:'#64748b' }}>{tx.from.slice(0,8)}…{tx.from.slice(-4)}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', color:'#00d4aa', fontWeight:700 }}>+{fmt(tx.value)}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'center' }}><a href={'https://polygonscan.com/tx/'+tx.hash} target="_blank" rel="noreferrer" style={{ color:COLORS[idx], textDecoration:'none' }}>↗</a></td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -999,62 +1025,65 @@ export default function App() {
             {/* ── FIAT ── */}
             {activeTab==='fiat'&&(
               <div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:20}}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12, marginBottom:20 }}>
                   <KPI label="Total Captado (USD)" value={fmt(fTotals.totalUsd)} sub={'€'+fTotals.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0})+' convertido'} color="#00d4aa"/>
                   <KPI label="Total Inversores" value={fTotals.inversores.toLocaleString()} sub="Inversores activos" color="#818cf8"/>
-                  <KPI label="Mayor Proyecto" value={Object.entries(fiatData).sort((a,b)=>(b[1].totalUsd||0)-(a[1].totalUsd||0))[0]?.[0]||'—'} sub={fmt(Object.values(fiatData).sort((a,b)=>(b.totalUsd||0)-(a.totalUsd||0))[0]?.totalUsd||0)} color="#fb923c"/>
+                  <KPI label="Mayor Proyecto" value={data.slice().sort((a,b)=>(b.fiat?.totalUsd||0)-(a.fiat?.totalUsd||0))[0]?.name||'—'} sub={fmt(data.slice().sort((a,b)=>(b.fiat?.totalUsd||0)-(a.fiat?.totalUsd||0))[0]?.fiat?.totalUsd||0)} color="#fb923c"/>
                   <KPI label="Promedio / Proyecto" value={fmt(fTotals.totalUsd/safes.length)} sub="USD por safe" color="#f472b6"/>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(440px,1fr))',gap:12}}>
-                  {safes.map((safe,idx)=>{
-                    const fiat=fiatData[safe.name]; if(!fiat) return null;
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(440px,1fr))', gap:12 }}>
+                  {data.map((safe,idx)=>{
                     const isSO=!!safe.soldOut;
-                    return(
-                      <div key={idx} className="card" style={{padding:20,borderTop:'3px solid '+(isSO?'#f59e0b':COLORS[idx]),position:'relative',overflow:'hidden'}}>
+                    const fiat=safe.fiat||{totalEur:0,totalUsd:0,count:0,txs:[]};
+                    return (
+                      <div key={idx} className="card" style={{ padding:20, borderTop:'3px solid '+(isSO?'#f59e0b':COLORS[idx]), position:'relative', overflow:'hidden' }}>
                         {isSO&&<div className="so-overlay"/>}
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-                          <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                            <div style={{width:9,height:9,borderRadius:'50%',background:isSO?'#f59e0b':COLORS[idx]}}/>
-                            <span style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.05em'}}>{safe.name}</span>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                            <div style={{ width:9, height:9, borderRadius:'50%', background:isSO?'#f59e0b':COLORS[idx] }}/>
+                            <span style={{ fontWeight:700, color:'#f1f5f9', fontSize:'1.05em' }}>{safe.name}</span>
                             {isSO&&<SoldOutBadge/>}
                           </div>
-                          <div style={{textAlign:'right'}}>
-                            <div style={{color:isSO?'#f59e0b':COLORS[idx],fontWeight:700,fontSize:'1.2em'}}>{fmt(fiat.totalUsd)}</div>
-                            <div style={{fontSize:'0.72em',color:'#475569'}}>€{fiat.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0})}</div>
+                          <div style={{ textAlign:'right' }}>
+                            <div style={{ color:isSO?'#f59e0b':COLORS[idx], fontWeight:700, fontSize:'1.2em' }}>{fmt(fiat.totalUsd)}</div>
+                            <div style={{ fontSize:'0.72em', color:'#475569' }}>€{fiat.totalEur.toLocaleString('es-ES',{maximumFractionDigits:0})}</div>
                           </div>
                         </div>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
-                          {[{label:'Inversores',value:fiat.count,color:isSO?'#f59e0b':COLORS[idx]},{label:'Promedio',value:fmt(fiat.count>0?fiat.totalUsd/fiat.count:0),color:'#94a3b8'}].map((m,i)=>(
-                            <div key={i} style={{background:'#0f172a',borderRadius:8,padding:'11px 8px',textAlign:'center'}}>
-                              <div style={{fontSize:'0.72em',color:'#475569',textTransform:'uppercase',marginBottom:5}}>{m.label}</div>
-                              <div style={{fontSize:i===0?'1.4em':'1.1em',fontWeight:700,color:m.color}}>{m.value}</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16 }}>
+                          {[
+                            { label:'Inversores', value:fiat.count, color:isSO?'#f59e0b':COLORS[idx] },
+                            { label:'Promedio', value:fmt(fiat.count>0?fiat.totalUsd/fiat.count:0), color:'#94a3b8' },
+                          ].map((m,i)=>(
+                            <div key={i} style={{ background:'#0f172a', borderRadius:8, padding:'11px 8px', textAlign:'center' }}>
+                              <div style={{ fontSize:'0.72em', color:'#475569', textTransform:'uppercase', marginBottom:5 }}>{m.label}</div>
+                              <div style={{ fontSize:i===0?'1.4em':'1.1em', fontWeight:700, color:m.color }}>{m.value}</div>
                             </div>
                           ))}
                         </div>
                         {isSO?(
-                          <div style={{background:'#f59e0b11',border:'1px solid #f59e0b33',borderRadius:8,padding:'10px 14px',fontSize:'0.78em',color:'#f59e0b88',textAlign:'center'}}>
+                          <div style={{ background:'#f59e0b11', border:'1px solid #f59e0b33', borderRadius:8, padding:'10px 14px', fontSize:'0.78em', color:'#f59e0b88', textAlign:'center' }}>
                             🔒 No consulta el sheet · Datos congelados a {safe.frozenData?.date||''}
                           </div>
-                        ):fiat.txs.length>0?(
+                        ):(fiat.txs||[]).length>0?(
                           <details>
-                            <summary style={{background:'#0f172a',padding:'8px 12px',borderRadius:7,fontSize:'0.8em',color:'#64748b',userSelect:'none'}}>▶ Últimas {fiat.txs.length} transacciones fiat</summary>
-                            <div style={{marginTop:10}}>
-                              <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.8em'}}>
-                                <thead><tr style={{color:'#475569',fontSize:'0.88em',textTransform:'uppercase'}}>{['Fecha','Inversor','EUR','USD'].map((h,i)=><th key={i} style={{padding:'6px 10px',textAlign:i>=2?'right':'left',fontWeight:500}}>{h}</th>)}</tr></thead>
+                            <summary style={{ background:'#0f172a', padding:'8px 12px', borderRadius:7, fontSize:'0.8em', color:'#64748b', userSelect:'none' }}>▶ Últimas {fiat.txs.length} transacciones fiat</summary>
+                            <div style={{ marginTop:10 }}>
+                              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'0.8em' }}>
+                                <thead><tr style={{ color:'#475569', fontSize:'0.88em', textTransform:'uppercase' }}>{['Fecha','Inversor','EUR','USD'].map((h,i)=><th key={i} style={{ padding:'6px 10px', textAlign:i>=2?'right':'left', fontWeight:500 }}>{h}</th>)}</tr></thead>
                                 <tbody>
                                   {fiat.txs.map((tx,i)=>(
-                                    <tr key={i} className="row" style={{borderBottom:'1px solid #1e293b'}}>
-                                      <td style={{padding:'7px 10px',color:'#94a3b8'}}>{tx.fecha}</td>
-                                      <td style={{padding:'7px 10px',color:'#64748b'}}>{tx.detalle}</td>
-                                      <td style={{padding:'7px 10px',textAlign:'right',color:'#475569'}}>€{tx.importe.toLocaleString('es-ES',{maximumFractionDigits:2})}</td>
-                                      <td style={{padding:'7px 10px',textAlign:'right',color:'#00d4aa',fontWeight:700}}>{fmt(tx.importe*EUR_USD)}</td>
+                                    <tr key={i} className="row" style={{ borderBottom:'1px solid #1e293b' }}>
+                                      <td style={{ padding:'7px 10px', color:'#94a3b8' }}>{tx.fecha}</td>
+                                      <td style={{ padding:'7px 10px', color:'#64748b' }}>{tx.detalle}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', color:'#475569' }}>€{tx.importe.toLocaleString('es-ES',{maximumFractionDigits:2})}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', color:'#00d4aa', fontWeight:700 }}>{fmt(tx.importe*EUR_USD)}</td>
                                     </tr>
                                   ))}
                                 </tbody>
                               </table>
                             </div>
                           </details>
-                        ):<div style={{background:'#0f172a',borderRadius:8,padding:'14px',textAlign:'center',color:'#334155',fontSize:'0.82em'}}>Sin transacciones fiat registradas</div>}
+                        ):<div style={{ background:'#0f172a', borderRadius:8, padding:'14px', textAlign:'center', color:'#334155', fontSize:'0.82em' }}>Sin transacciones fiat registradas</div>}
                       </div>
                     );
                   })}
@@ -1064,20 +1093,46 @@ export default function App() {
 
             {/* ── 2026 ── */}
             {activeTab==='2026'&&(()=>{
-              // Usamos exactamente los mismos datos que el consolidado:
-              // data[x].metrics.total = cripto (real o congelado)
-              // data[x].fiat.totalUsd = fiat (real o congelado)
-              // Esto garantiza que 2026 == consolidado siempre
-              const cripto2026Total = data.reduce((s,d)=>s+parseFloat(d.metrics.total||0),0);
-              const cripto2026Txs   = data.reduce((s,d)=>s+(d.metrics.count||0),0);
-              const fiat2026Total   = data.reduce((s,d)=>s+(d.fiat?.totalUsd||0),0);
-              const fiat2026Count   = data.reduce((s,d)=>s+(d.fiat?.count||0),0);
-              const total2026=cripto2026Total+fiat2026Total;
-              const pctFiat2026=total2026>0?(fiat2026Total/total2026)*100:0;
-              const pctCripto2026=total2026>0?(cripto2026Total/total2026)*100:0;
-              return(
+              // CRIPTO 2026:
+              // Sold out con frozenData.criptoUsd2026 → usar ese valor (solo txs de 2026)
+              // Sold out sin criptoUsd2026 (freeze antiguo) → usar total como aproximación
+              // Activos → filtrar transfers reales por año 2026
+              let cripto2026Total = 0, cripto2026Txs = 0;
+              data.forEach(safe => {
+                if (safe.soldOut && safe.frozenData) {
+                  cripto2026Total += (safe.frozenData.criptoUsd2026 != null) ? safe.frozenData.criptoUsd2026 : parseFloat(safe.metrics.total||0);
+                  cripto2026Txs  += (safe.frozenData.criptoTxs2026 != null) ? safe.frozenData.criptoTxs2026 : (safe.metrics.count||0);
+                } else {
+                  (safe.transfers||[]).forEach(tx => {
+                    if (tx.timestamp.getFullYear() === 2026) { cripto2026Total += tx.value||0; cripto2026Txs++; }
+                  });
+                }
+              });
+
+              // FIAT 2026:
+              // Sold out con frozenData.fiatUsd2026 → usar ese valor (solo fiat de 2026)
+              // Sold out sin fiatUsd2026 (freeze antiguo) → usar total fiat como aproximación
+              // Activos → filtrar txs del sheet por año 2026
+              let fiat2026Total = 0, fiat2026Count = 0;
+              data.forEach(safe => {
+                if (safe.soldOut && safe.frozenData) {
+                  fiat2026Total += (safe.frozenData.fiatUsd2026 != null) ? safe.frozenData.fiatUsd2026 : (safe.fiat?.totalUsd||0);
+                  fiat2026Count += (safe.frozenData.fiatCount2026 != null) ? safe.frozenData.fiatCount2026 : (safe.fiat?.count||0);
+                } else {
+                  const sf = fiatData[safe.name]; if (!sf) return;
+                  (sf.txs||[]).forEach(tx => {
+                    if (getYearFromFecha(tx.fecha) === '2026') { fiat2026Total += (tx.importe||0)*EUR_USD; fiat2026Count++; }
+                  });
+                }
+              });
+
+              const total2026 = cripto2026Total + fiat2026Total;
+              const pctFiat2026 = total2026>0?(fiat2026Total/total2026)*100:0;
+              const pctCripto2026 = total2026>0?(cripto2026Total/total2026)*100:0;
+
+              return (
                 <div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:20}}>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12, marginBottom:20 }}>
                     <KPI label="Capital Total 2026 (USD)" value={fmt(total2026)} sub="Fiat + Cripto en 2026" color="#00d4aa"/>
                     <KPI label="Fiat 2026" value={fmt(fiat2026Total)} sub={fiat2026Count+' inversores'} color="#818cf8"/>
                     <KPI label="Cripto 2026 (USDT)" value={fmt(cripto2026Total)} sub={cripto2026Txs+' TXs on-chain'} color="#fb923c"/>
@@ -1089,7 +1144,7 @@ export default function App() {
               );
             })()}
 
-            <div style={{marginTop:32,textAlign:'center',color:'#1e293b',fontSize:'0.72em'}}>
+            <div style={{ marginTop:32, textAlign:'center', color:'#1e293b', fontSize:'0.72em' }}>
               Raised Capital · Polygon · Moralis API · {activeCount} activos · {soldOutCount} 🔒 · 🌐 JSONbin sync
             </div>
           </div>
