@@ -382,7 +382,7 @@ jobs:
 
             // Send via Brevo
             const payload = JSON.stringify({
-              sender: { name: 'Raised Capital', email: 'noreply@reental.co' },
+              sender: { name: 'Raised Capital', email: 'finanzas@reental.co' },
               to: recipients,
               subject: `📊 Raised Capital — ${new Date().toLocaleDateString('es-ES')} — ${fmt(totalCapital)}`,
               htmlContent: html,
