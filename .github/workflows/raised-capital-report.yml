@@ -18,6 +18,7 @@ jobs:
           RECIPIENTS: ${{ secrets.REPORT_RECIPIENTS }}
           MORALIS_KEY: ${{ secrets.MORALIS_KEY }}
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+          APP_URL: ${{ secrets.APP_URL }}
         run: |
           node << 'EOF'
           const https = require('https');
@@ -25,6 +26,7 @@ jobs:
           const MORALIS_KEY = process.env.MORALIS_KEY;
           const SHEET_CSV_URL = process.env.SHEET_CSV_URL;
           const BREVO_KEY = process.env.BREVO_API_KEY;
+          const APP_URL = process.env.APP_URL || 'https://raised-capital.vercel.app';
           const EUR_USD = 1.1855;
 
           // JSONbin — misma fuente que la app, se actualiza automaticamente cuando añades safes en Admin
@@ -445,6 +447,13 @@ jobs:
                       </tr>
                     </tfoot>
                   </table>
+                </div>
+
+                <!-- Link a la app -->
+                <div style="text-align:center;margin-bottom:20px;">
+                  <a href="${APP_URL}" style="display:inline-block;background:#00d4aa;color:#0f172a;text-decoration:none;font-weight:700;font-family:monospace;font-size:0.95em;padding:14px 36px;border-radius:9px;">
+                    📊 Ver Dashboard Completo →
+                  </a>
                 </div>
 
                 <!-- Footer -->
