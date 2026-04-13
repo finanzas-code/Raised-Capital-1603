@@ -27,13 +27,31 @@ jobs:
           const BREVO_KEY = process.env.BREVO_API_KEY;
           const EUR_USD = 1.1855;
 
-          const SAFES = [
+          // JSONbin — misma fuente que la app, se actualiza automaticamente cuando añades safes en Admin
+          const JSONBIN_BIN_ID  = '69b83cacb7ec241ddc73c5d7';
+          const JSONBIN_API_KEY = '$2a$10$MqO48GfuzCCzj5YTst9dke12Rfn/8eGIbO4SK/zbXs/.zzp6O8Nkm';
+          const JSONBIN_URL     = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`;
+
+          const DEFAULT_SAFES = [
             { address: '0x7FB1e8a839B81C9Ae4CebAd6f259106d77eD83D2', name: 'CME-1' },
             { address: '0x17BF9A5bF74181AaB6CbB7EC80e16B7F1bFDF5a7', name: 'RET-2' },
             { address: '0x7590219fDAFcC4e48c8c4E9178722d916d7EE305', name: 'SLA-3' },
             { address: '0x8823eed2A3644edC49abd6628c777bFC3f4243F0', name: 'GRX-4' },
             { address: '0xba9759D878c0Ff656f1C1d9670F4736E162F61AF', name: 'LVT-2' },
+            { address: '0xfd1Fb402260dA84435325b2aCD5Ec026a1b2DbB3', name: 'ABD-1' },
+            { address: '0xf66350Eb77Ec7aaF1A54770453D3cf99C112299f', name: 'SLA-4' },
           ];
+
+          async function loadSafes() {
+            try {
+              const data = await fetchJson(JSONBIN_URL, { headers: { 'X-Master-Key': JSONBIN_API_KEY } });
+              if (Array.isArray(data.record) && data.record.length > 0) {
+                // Filtrar solo los campos necesarios, ignorar soldOut etc
+                return data.record.map(s => ({ address: s.address, name: s.name }));
+              }
+            } catch(e) { console.error('JSONbin error:', e.message); }
+            return DEFAULT_SAFES;
+          }
 
           const BUDGET_2026 = [
             { mes: 'Ene', goal: 2500000 },
@@ -87,19 +105,29 @@ jobs:
           async function getTransfersTotal(address) {
             try {
               let total = 0, count = 0, cursor = null, pages = 0;
+              const byMonth2026 = new Array(13).fill(0);
+              let total2026 = 0, count2026 = 0;
               while (pages < 20) {
                 const url = `https://deep-index.moralis.io/api/v2.2/${address}/erc20/transfers?chain=0x89&contract_addresses[]=${USDT}&limit=100${cursor ? '&cursor=' + cursor : ''}`;
                 const data = await fetchJson(url, { headers: { 'accept': 'application/json', 'X-API-Key': MORALIS_KEY } });
                 if (!data.result?.length) break;
                 data.result
                   .filter(tx => tx.to_address?.toLowerCase() === address.toLowerCase())
-                  .forEach(tx => { total += parseInt(tx.value) / 1e6; count++; });
+                  .forEach(tx => {
+                    const val = parseInt(tx.value) / 1e6;
+                    total += val; count++;
+                    const ts = new Date(tx.block_timestamp);
+                    if (ts.getFullYear() === 2026) {
+                      total2026 += val; count2026++;
+                      byMonth2026[ts.getMonth() + 1] += val;
+                    }
+                  });
                 cursor = data.cursor; pages++;
                 if (!cursor) break;
                 await new Promise(r => setTimeout(r, 150));
               }
-              return { total, count };
-            } catch { return { total: 0, count: 0 }; }
+              return { total, count, total2026, count2026, byMonth2026 };
+            } catch { return { total: 0, count: 0, total2026: 0, count2026: 0, byMonth2026: new Array(13).fill(0) }; }
           }
 
           function httpsGetFollowRedirects(url, maxRedirects = 5) {
@@ -120,7 +148,7 @@ jobs:
             });
           }
 
-          async function fetchFiat() {
+          async function fetchFiat(SAFES) {
             try {
               const res = await httpsGetFollowRedirects(SHEET_CSV_URL);
               const lines = res.trim().split('\n');
@@ -174,42 +202,57 @@ jobs:
           }
 
           async function main() {
+            console.log('Loading safes from JSONbin...');
+            const SAFES = await loadSafes();
+            console.log(`Loaded ${SAFES.length} safes:`, SAFES.map(s => s.name).join(', '));
+
             console.log('Fetching fiat data...');
-            const fiatData = await fetchFiat();
+            const fiatData = await fetchFiat(SAFES);
 
             console.log('Fetching blockchain data...');
             let totalCripto = 0, totalCriptoTxs = 0;
             const safeRows = [];
-            const mCripto = new Array(13).fill(0);
+            
+
+            let totalCripto2026 = 0, totalCripto2026Txs = 0;
+            const mCripto2026 = new Array(13).fill(0);
 
             for (const safe of SAFES) {
-              const [balance, { total, count }] = await Promise.all([
+              const [balance, transfers] = await Promise.all([
                 getBalance(safe.address),
                 getTransfersTotal(safe.address)
               ]);
-              const fiat = fiatData[safe.name] || { totalEur: 0, totalUsd: 0, count: 0 };
-              totalCripto += total;
-              totalCriptoTxs += count;
-              safeRows.push({ name: safe.name, fiatUsd: fiat.totalUsd, fiatEur: fiat.totalEur, cripto: total, total: fiat.totalUsd + total, inversores: fiat.count });
+              const fiat = fiatData[safe.name] || { totalEur: 0, totalUsd: 0, count: 0, byMonth: {} };
+              totalCripto += transfers.total;
+              totalCriptoTxs += transfers.count;
+              totalCripto2026 += transfers.total2026;
+              totalCripto2026Txs += transfers.count2026;
+              transfers.byMonth2026.forEach((v, i) => { mCripto2026[i] += v; });
+              safeRows.push({ name: safe.name, fiatUsd: fiat.totalUsd, fiatEur: fiat.totalEur, cripto: transfers.total, total: fiat.totalUsd + transfers.total, inversores: fiat.count });
             }
 
-            // Fiat totals
+            // Totales consolidado
             const totalFiatUsd = safeRows.reduce((s, r) => s + r.fiatUsd, 0);
             const totalFiatEur = safeRows.reduce((s, r) => s + r.fiatEur, 0);
             const totalInversores = safeRows.reduce((s, r) => s + r.inversores, 0);
             const totalCapital = totalFiatUsd + totalCripto;
 
-            // Budget 2026
-            const mFiat = new Array(13).fill(0);
+            // Totales 2026
+            const mFiat2026 = new Array(13).fill(0);
             Object.values(fiatData).forEach(sf => {
-              Object.entries(sf.byMonth || {}).forEach(([mo, usd]) => { mFiat[parseInt(mo)] += usd; });
+              Object.entries(sf.byMonth || {}).forEach(([mo, usd]) => { mFiat2026[parseInt(mo)] += usd; });
             });
+            const totalFiat2026 = mFiat2026.reduce((s, v) => s + v, 0);
+            const total2026 = totalFiat2026 + totalCripto2026;
+
+            // Budget 2026
+            const mFiat = mFiat2026;
 
             const nowMo = new Date().getMonth(); // 0-based
             let ytdGoal = 0, ytdReal = 0;
             const budgetRows = BUDGET_2026.map((b, i) => {
               const mo = i + 1;
-              const real = mFiat[mo] + mCripto[mo];
+              const real = mFiat[mo] + mCripto2026[mo];
               const hasPassed = i <= nowMo;
               if (hasPassed) { ytdGoal += b.goal; ytdReal += real; }
               const pct = hasPassed && b.goal > 0 ? (real / b.goal * 100).toFixed(1) : null;
@@ -346,6 +389,35 @@ jobs:
                       </tr>
                     </thead>
                     <tbody>${budgetRowsHtml}</tbody>
+                  </table>
+                </div>
+
+                <!-- 2026 KPIs -->
+                <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+                  <div style="font-size:0.8em;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:16px;">📅 Capital 2026</div>
+                  <table width="100%" style="border-collapse:collapse;">
+                    <tr>
+                      <td width="33%" style="padding:0 6px 0 0;">
+                        <div style="background:#0f172a;border-radius:8px;padding:14px;border-left:3px solid #00d4aa;">
+                          <div style="font-size:0.7em;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Total 2026</div>
+                          <div style="font-size:1.3em;font-weight:700;color:#00d4aa;">${fmt(total2026)}</div>
+                          <div style="font-size:0.7em;color:#475569;margin-top:3px;">Fiat + Cripto</div>
+                        </div>
+                      </td>
+                      <td width="33%" style="padding:0 6px;">
+                        <div style="background:#0f172a;border-radius:8px;padding:14px;border-left:3px solid #818cf8;">
+                          <div style="font-size:0.7em;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Fiat 2026</div>
+                          <div style="font-size:1.3em;font-weight:700;color:#818cf8;">${fmt(totalFiat2026)}</div>
+                        </div>
+                      </td>
+                      <td width="33%" style="padding:0 0 0 6px;">
+                        <div style="background:#0f172a;border-radius:8px;padding:14px;border-left:3px solid #fb923c;">
+                          <div style="font-size:0.7em;color:#64748b;text-transform:uppercase;margin-bottom:4px;">Cripto 2026</div>
+                          <div style="font-size:1.3em;font-weight:700;color:#fb923c;">${fmt(totalCripto2026)}</div>
+                          <div style="font-size:0.7em;color:#475569;margin-top:3px;">${totalCripto2026Txs} txs</div>
+                        </div>
+                      </td>
+                    </tr>
                   </table>
                 </div>
 
