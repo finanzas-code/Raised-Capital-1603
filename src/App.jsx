@@ -13,30 +13,28 @@ const LOGIN_PASS = 'raised2026';
 const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTN35Qf_kApsWveC1A7blqmsYqTMbLqrbQk0rI7lgfKBtle3rWA6IcNc2VkFfqI106s_LO3zFne5Uga/pub?gid=0&single=true&output=csv';
 const LOGO_SRC = 'https://drive.google.com/file/d/1Nv5iDeb8nk44OeKr0jRwhy0I4NHYWCfy/view?usp=drive_link';
 
-const JSONBIN_BIN_ID  = '69b83cacb7ec241ddc73c5d7';
-const JSONBIN_API_KEY = '$2a$10$MqO48GfuzCCzj5YTst9dke12Rfn/8eGIbO4SK/zbXs/.zzp6O8Nkm';
-const JSONBIN_URL     = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
+const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
 async function loadSafesFromJSONBin() {
   try {
-    const res = await fetch(JSONBIN_URL + '/latest', { headers: { 'X-Master-Key': JSONBIN_API_KEY } });
+    const res = await fetch(`${FIREBASE_URL}/safes.json`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (Array.isArray(data.record) && data.record.length > 0) return data.record;
+    if (Array.isArray(data) && data.length > 0) return data;
     return null;
-  } catch (e) { console.error('[JSONBin] Error:', e.message); return null; }
+  } catch (e) { console.error('[Firebase] Error cargando:', e.message); return null; }
 }
 
 async function saveSafesToJSONBin(safes) {
   try {
-    const res = await fetch(JSONBIN_URL, {
+    const res = await fetch(`${FIREBASE_URL}/safes.json`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Master-Key': JSONBIN_API_KEY },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(safes),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return true;
-  } catch (e) { console.error('[JSONBin] Error guardando:', e.message); return false; }
+  } catch (e) { console.error('[Firebase] Error guardando:', e.message); return false; }
 }
 
 const DEFAULT_SAFES = [
@@ -709,7 +707,7 @@ function Dashboard() {
             <div style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.1em'}}>Raised Capital</div>
             <div style={{fontSize:'0.78em',color:'#64748b'}}>
               Polygon · {activeCount} activos{soldOutCount>0?` · ${soldOutCount} 🔒`:''} · Fiat + Crypto
-              {storageError?<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Error sync</span>:<span style={{color:'#00d4aa',marginLeft:8}}>· 🌐 JSONbin</span>}
+              {storageError?<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Error sync</span>:<span style={{color:'#00d4aa',marginLeft:8}}>· 🌐 Firebase</span>}
               {fiatSource==='sheet'&&fiatLastUpdate&&<span style={{color:'#00d4aa',marginLeft:8}}>· 📊 Sheet {fiatLastUpdate.toLocaleTimeString()}</span>}
               {fiatSource==='fallback'&&<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Fiat local</span>}
             </div>
@@ -998,7 +996,7 @@ function Dashboard() {
             })()}
 
             <div style={{marginTop:32,textAlign:'center',color:'#1e293b',fontSize:'0.72em'}}>
-              Raised Capital · Polygon · {activeCount} activos · {soldOutCount} 🔒 · 🌐 JSONbin
+              Raised Capital · Polygon · {activeCount} activos · {soldOutCount} 🔒 · 🌐 Firebase
             </div>
           </div>
         )}
