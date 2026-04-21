@@ -36,6 +36,28 @@ async function saveSafesToJSONBin(safes) {
     return true;
   } catch (e) { console.error('[Firebase] Error guardando:', e.message); return false; }
 }
+async function loadBudgetFromFirebase() {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/budget2026.json`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (Array.isArray(data) && data.length === 12) return data;
+    return null;
+  } catch (e) { console.error('[Firebase] Error cargando budget:', e.message); return null; }
+}
+
+async function saveBudgetToFirebase(budget) {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/budget2026.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(budget),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return true;
+  } catch (e) { console.error('[Firebase] Error guardando budget:', e.message); return false; }
+}
+
 
 const DEFAULT_SAFES = [
   { address: '0x7FB1e8a839B81C9Ae4CebAd6f259106d77eD83D2', name: 'CME-1' },
@@ -48,7 +70,7 @@ const DEFAULT_SAFES = [
 const COLOR_PALETTE = ['#00d4aa','#818cf8','#fb923c','#f472b6','#34d399','#60a5fa','#fbbf24','#e879f9','#a3e635','#38bdf8','#f87171','#c084fc'];
 
 const BUDGET_2026 = [
-  { mes: 'Ene', label: 'Enero',      goal: 2500000 },
+  { mes: 'Ene', label: 'Enero',      goal: 3500000 },
   { mes: 'Feb', label: 'Febrero',    goal: 3773000 },
   { mes: 'Mar', label: 'Marzo',      goal: 4045000 },
   { mes: 'Abr', label: 'Abril',      goal: 4318000 },
@@ -326,8 +348,47 @@ function PromedioSection({ safes, fiatData, data, COLORS }) {
   );
 }
 
+
+// ─── BUDGET EDITOR ───
+function BudgetEditor({ budget2026, handleSaveBudget, saving }) {
+  const [localBudget, setLocalBudget] = useState(budget2026.map(b => ({ ...b })));
+  const [budgetSuccess, setBudgetSuccess] = useState('');
+
+  const handleChange = (idx, val) => {
+    const n = parseFloat(val.replace(/[^0-9.]/g, '')) || 0;
+    setLocalBudget(prev => prev.map((b, i) => i === idx ? { ...b, goal: n } : b));
+  };
+
+  const handleSave = async () => {
+    const ok = await handleSaveBudget(localBudget);
+    if (ok) { setBudgetSuccess('✅ Targets guardados'); setTimeout(() => setBudgetSuccess(''), 3000); }
+  };
+
+  return (
+    <div style={{ background:'#0f172a', borderRadius:12, padding:'18px 16px', marginBottom:16 }}>
+      <div style={{ fontSize:'0.78em', color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:14 }}>🎯 Editar Targets 2026 (USD)</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:8, marginBottom:12 }}>
+        {localBudget.map((b, i) => (
+          <div key={i}>
+            <div style={{ fontSize:'0.7em', color:'#475569', marginBottom:3 }}>{b.label}</div>
+            <input
+              value={b.goal.toLocaleString('en-US')}
+              onChange={e => handleChange(i, e.target.value)}
+              style={{ width:'100%', background:'#1e293b', border:'1px solid #334155', borderRadius:6, padding:'7px 10px', color:'#00d4aa', fontSize:'0.85em', fontFamily:'monospace', outline:'none', textAlign:'right' }}
+            />
+          </div>
+        ))}
+      </div>
+      {budgetSuccess && <div style={{ color:'#00d4aa', fontSize:'0.8em', marginBottom:8 }}>{budgetSuccess}</div>}
+      <button onClick={handleSave} disabled={saving} style={{ background:saving?'#334155':'#818cf8', color:'#0f172a', border:'none', borderRadius:8, padding:'10px 22px', fontWeight:700, cursor:saving?'default':'pointer', fontFamily:'monospace', fontSize:'0.88em' }}>
+        {saving ? '⏳ Guardando...' : '💾 Guardar Targets'}
+      </button>
+    </div>
+  );
+}
+
 // ─── ADMIN MODAL ───
-function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinSubmit, handleCloseAdmin, safes, editIdx, setEditIdx, editName, setEditName, editAddr, setEditAddr, handleEditSave, handleDeleteSafe, handleToggleSoldOut, newSafeName, setNewSafeName, newSafeAddr, setNewSafeAddr, addError, addSuccess, handleAddSafe, handleResetDefaults, saving, data }) {
+function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinSubmit, handleCloseAdmin, safes, editIdx, setEditIdx, editName, setEditName, editAddr, setEditAddr, handleEditSave, handleDeleteSafe, handleToggleSoldOut, newSafeName, setNewSafeName, newSafeAddr, setNewSafeAddr, addError, addSuccess, handleAddSafe, handleResetDefaults, saving, data, budget2026, handleSaveBudget }) {
   const hasData = !!data;
   return (
     <div style={{ position:'fixed', inset:0, background:'#00000099', zIndex:999, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
@@ -415,6 +476,7 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
                 {saving?'⏳ Guardando...':'➕ Agregar Safe'}
               </button>
             </div>
+            <BudgetEditor budget2026={budget2026} handleSaveBudget={handleSaveBudget} saving={saving}/>
             <div style={{ borderTop:'1px solid #1e293b', paddingTop:16 }}>
               <div style={{ fontSize:'0.72em', color:'#475569', marginBottom:10 }}>⚠️ Zona de peligro</div>
               <button onClick={handleResetDefaults} disabled={saving} style={{ background:'#1e293b', color:'#f472b6', border:'1px solid #334155', borderRadius:8, padding:'8px 18px', cursor:'pointer', fontFamily:'monospace', fontSize:'0.82em' }}>🔄 Restaurar Safes por defecto</button>
@@ -439,6 +501,7 @@ export default function App() {
 // DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 function Dashboard() {
+  const [budget2026, setBudget2026] = useState(BUDGET_2026);
   const [storageReady, setStorageReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -474,6 +537,8 @@ function Dashboard() {
       try {
         const stored = await loadSafesFromJSONBin();
         if (stored) setSafes(stored);
+        const storedBudget = await loadBudgetFromFirebase();
+        if (storedBudget) setBudget2026(storedBudget);
         setStorageReady(true);
       } catch (e) { setStorageError(true); setStorageReady(true); }
     })();
@@ -590,6 +655,14 @@ function Dashboard() {
     setData(prev=>prev?prev.map(d=>d.name===safe.name?{...d,soldOut:true}:d):prev);
   };
 
+  const handleSaveBudget = async (newBudget) => {
+    setSaving(true);
+    const ok = await saveBudgetToFirebase(newBudget);
+    if (ok) setBudget2026(newBudget);
+    setSaving(false);
+    return ok;
+  };
+
   const handleCloseAdmin = () => { setShowAdmin(false); setAdminUnlocked(false); setPinInput(''); setPinError(''); setEditIdx(null); setAddError(''); };
 
   const cTotals = data ? { balance:data.reduce((s,d)=>s+parseFloat(d.balance),0).toFixed(2), received:data.reduce((s,d)=>s+parseFloat(d.metrics.total),0).toFixed(2), txs:data.reduce((s,d)=>s+d.metrics.count,0) } : null;
@@ -618,7 +691,7 @@ function Dashboard() {
       }
     });
     let ytdGoal=0,ytdReal=0;
-    const rows=BUDGET_2026.map((b,i)=>{const mo=i+1,real=mFiat[mo]+mCripto[mo],hasPassed=i<=nowMo;if(hasPassed){ytdGoal+=b.goal;ytdReal+=real;}return{...b,real:hasPassed?real:null,pctVal:hasPassed&&b.goal>0?(real/b.goal)*100:null,gap:hasPassed?b.goal-real:null,onTrack:hasPassed&&real>=b.goal};});
+    const rows=budget2026.map((b,i)=>{const mo=i+1,real=mFiat[mo]+mCripto[mo],hasPassed=i<=nowMo;if(hasPassed){ytdGoal+=b.goal;ytdReal+=real;}return{...b,real:hasPassed?real:null,pctVal:hasPassed&&b.goal>0?(real/b.goal)*100:null,gap:hasPassed?b.goal-real:null,onTrack:hasPassed&&real>=b.goal};});
     const ytdGap=ytdGoal-ytdReal,ytdPct=ytdGoal>0?(ytdReal/ytdGoal)*100:0;
     return (
       <div className="card" style={{padding:20,marginTop:20}}>
@@ -698,7 +771,7 @@ function Dashboard() {
         </div>
       )}
 
-      {showAdmin && <AdminModal adminUnlocked={adminUnlocked} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} handlePinSubmit={handlePinSubmit} handleCloseAdmin={handleCloseAdmin} safes={safes} editIdx={editIdx} setEditIdx={setEditIdx} editName={editName} setEditName={setEditName} editAddr={editAddr} setEditAddr={setEditAddr} handleEditSave={handleEditSave} handleDeleteSafe={handleDeleteSafe} handleToggleSoldOut={handleToggleSoldOut} newSafeName={newSafeName} setNewSafeName={setNewSafeName} newSafeAddr={newSafeAddr} setNewSafeAddr={setNewSafeAddr} addError={addError} addSuccess={addSuccess} handleAddSafe={handleAddSafe} handleResetDefaults={handleResetDefaults} saving={saving} data={data}/>}
+      {showAdmin && <AdminModal adminUnlocked={adminUnlocked} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} handlePinSubmit={handlePinSubmit} handleCloseAdmin={handleCloseAdmin} safes={safes} editIdx={editIdx} setEditIdx={setEditIdx} editName={editName} setEditName={setEditName} editAddr={editAddr} setEditAddr={setEditAddr} handleEditSave={handleEditSave} handleDeleteSafe={handleDeleteSafe} handleToggleSoldOut={handleToggleSoldOut} newSafeName={newSafeName} setNewSafeName={setNewSafeName} newSafeAddr={newSafeAddr} setNewSafeAddr={setNewSafeAddr} addError={addError} addSuccess={addSuccess} handleAddSafe={handleAddSafe} handleResetDefaults={handleResetDefaults} saving={saving} data={data} budget2026={budget2026} handleSaveBudget={handleSaveBudget}/>}
 
       <div style={{borderBottom:'1px solid #1e293b',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12,position:'sticky',top:0,background:'#0f172a',zIndex:10}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
