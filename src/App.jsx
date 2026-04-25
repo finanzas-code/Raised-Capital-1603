@@ -6,6 +6,7 @@ import {
 
 const MORALIS_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImVjZGNjZDhiLTVmYjAtNDExMC1iZWUxLTY2ZGNhODQwZjE2MyIsIm9yZ0lkIjoiNDc4Njc3IiwidXNlcklkIjoiNDkyNDY4IiwidHlwZUlkIjoiZmQ5Zjk4ZTUtZTc1Yy00Mjk0LWJkZjYtMmZiZTg0NjgzZmZiIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3Njk4NjYwMTIsImV4cCI6NDkyNTYyNjAxMn0.StuCFBwn4_Wv32m2FeuCeuMzJPVVWlewCwE2VxnMzto';
 const USDT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
+const USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 const EUR_USD = 1.1855;
 const ADMIN_PIN = '2024';
 const LOGIN_USER = 'reental';
@@ -177,16 +178,19 @@ async function getBalance(address) {
     const res = await fetch(`https://deep-index.moralis.io/api/v2.2/${address}/erc20?chain=0x89`, { headers: { accept: 'application/json', 'X-API-Key': MORALIS_KEY } });
     const data = await res.json();
     if (!Array.isArray(data)) return '0.00';
-    const token = data.find(t => t.token_address?.toLowerCase() === USDT.toLowerCase());
-    return token ? (parseInt(token.balance) / Math.pow(10, token.decimals)).toFixed(2) : '0.00';
+    const stableAddresses = [USDT.toLowerCase(), USDC.toLowerCase()];
+    const total = data
+      .filter(t => stableAddresses.includes(t.token_address?.toLowerCase()))
+      .reduce((s, t) => s + parseInt(t.balance) / Math.pow(10, t.decimals), 0);
+    return total.toFixed(2);
   } catch { return '0.00'; }
 }
 
-async function getTransfers(address) {
+async function getTransfersForToken(address, tokenAddress) {
   try {
     let all = [], cursor = null, pages = 0;
     while (pages < 20) {
-      const url = `https://deep-index.moralis.io/api/v2.2/${address}/erc20/transfers?chain=0x89&contract_addresses[]=${USDT}&limit=100${cursor ? '&cursor=' + cursor : ''}`;
+      const url = `https://deep-index.moralis.io/api/v2.2/${address}/erc20/transfers?chain=0x89&contract_addresses[]=${tokenAddress}&limit=100${cursor ? '&cursor=' + cursor : ''}`;
       const res = await fetch(url, { headers: { accept: 'application/json', 'X-API-Key': MORALIS_KEY } });
       const data = await res.json();
       if (!data.result?.length) break;
@@ -197,6 +201,14 @@ async function getTransfers(address) {
     }
     return all;
   } catch { return []; }
+}
+
+async function getTransfers(address) {
+  const [usdt, usdc] = await Promise.all([
+    getTransfersForToken(address, USDT),
+    getTransfersForToken(address, USDC),
+  ]);
+  return [...usdt, ...usdc];
 }
 
 function processTransfers(transfers) {
