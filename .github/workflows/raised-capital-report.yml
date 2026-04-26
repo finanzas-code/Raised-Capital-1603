@@ -3,9 +3,8 @@ name: Raised Capital Daily Report
 on:
   schedule:
     # 8:00 AM Spain (UTC+2 verano = 6:00 UTC / UTC+1 invierno = 7:00 UTC)
-    # Usamos 6:00 UTC para cubrir horario de verano
     - cron: '0 6 * * *'
-  workflow_dispatch: # permite lanzarlo manualmente desde GitHub
+  workflow_dispatch:
 
 jobs:
   send-report:
@@ -26,13 +25,11 @@ jobs:
           const MORALIS_KEY = process.env.MORALIS_KEY;
           const SHEET_CSV_URL = process.env.SHEET_CSV_URL;
           const BREVO_KEY = process.env.BREVO_API_KEY;
-          const APP_URL = process.env.APP_URL || 'https://raised-capital.vercel.app';
+          const APP_URL = process.env.APP_URL || 'https://raised-capital-1603.vercel.app';
           const EUR_USD = 1.1855;
 
-          // JSONbin — misma fuente que la app, se actualiza automaticamente cuando añades safes en Admin
-          const JSONBIN_BIN_ID  = '69b83cacb7ec241ddc73c5d7';
-          const JSONBIN_API_KEY = '$2a$10$MqO48GfuzCCzj5YTst9dke12Rfn/8eGIbO4SK/zbXs/.zzp6O8Nkm';
-          const JSONBIN_URL     = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`;
+          // ── Firebase (sustituye JSONbin) ──
+          const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
           const DEFAULT_SAFES = [
             { address: '0x7FB1e8a839B81C9Ae4CebAd6f259106d77eD83D2', name: 'CME-1' },
@@ -46,31 +43,42 @@ jobs:
 
           async function loadSafes() {
             try {
-              const data = await fetchJson(JSONBIN_URL, { headers: { 'X-Master-Key': JSONBIN_API_KEY } });
-              if (Array.isArray(data.record) && data.record.length > 0) {
-                // Filtrar solo los campos necesarios, ignorar soldOut etc
-                return data.record.map(s => ({ address: s.address, name: s.name }));
+              const data = await fetchJson(`${FIREBASE_URL}/safes.json`);
+              if (Array.isArray(data) && data.length > 0) {
+                return data.map(s => ({ address: s.address, name: s.name }));
               }
-            } catch(e) { console.error('JSONbin error:', e.message); }
+            } catch(e) { console.error('Firebase error:', e.message); }
+            console.log('Usando DEFAULT_SAFES como fallback');
             return DEFAULT_SAFES;
           }
 
-          const BUDGET_2026 = [
-            { mes: 'Ene', goal: 2500000 },
-            { mes: 'Feb', goal: 3773000 },
-            { mes: 'Mar', goal: 4045000 },
-            { mes: 'Abr', goal: 4318000 },
-            { mes: 'May', goal: 4591000 },
-            { mes: 'Jun', goal: 4864000 },
-            { mes: 'Jul', goal: 5136000 },
-            { mes: 'Ago', goal: 5409000 },
-            { mes: 'Sep', goal: 5682000 },
-            { mes: 'Oct', goal: 5955000 },
-            { mes: 'Nov', goal: 6227000 },
-            { mes: 'Dic', goal: 6500000 },
+          async function loadBudget() {
+            try {
+              const data = await fetchJson(`${FIREBASE_URL}/budget2026.json`);
+              if (Array.isArray(data) && data.length === 12) return data;
+            } catch(e) { console.error('Firebase budget error:', e.message); }
+            return BUDGET_2026_DEFAULT;
+          }
+
+          const BUDGET_2026_DEFAULT = [
+            { mes: 'Ene', label: 'Enero',      goal: 3500000 },
+            { mes: 'Feb', label: 'Febrero',    goal: 3773000 },
+            { mes: 'Mar', label: 'Marzo',      goal: 4045000 },
+            { mes: 'Abr', label: 'Abril',      goal: 4318000 },
+            { mes: 'May', label: 'Mayo',       goal: 4591000 },
+            { mes: 'Jun', label: 'Junio',      goal: 4864000 },
+            { mes: 'Jul', label: 'Julio',      goal: 5136000 },
+            { mes: 'Ago', label: 'Agosto',     goal: 5409000 },
+            { mes: 'Sep', label: 'Septiembre', goal: 5682000 },
+            { mes: 'Oct', label: 'Octubre',    goal: 5955000 },
+            { mes: 'Nov', label: 'Noviembre',  goal: 6227000 },
+            { mes: 'Dic', label: 'Diciembre',  goal: 6500000 },
           ];
 
+          // ── USDT + USDC en Polygon ──
           const USDT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
+          const USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+          const STABLE_TOKENS = [USDT, USDC];
 
           function fmt(n) {
             return '$' + parseFloat(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -99,18 +107,20 @@ jobs:
                 { headers: { 'accept': 'application/json', 'X-API-Key': MORALIS_KEY } }
               );
               if (!Array.isArray(data)) return 0;
-              const token = data.find(t => t.token_address?.toLowerCase() === USDT.toLowerCase());
-              return token ? parseInt(token.balance) / Math.pow(10, token.decimals) : 0;
+              const stableAddrs = STABLE_TOKENS.map(t => t.toLowerCase());
+              return data
+                .filter(t => stableAddrs.includes(t.token_address?.toLowerCase()))
+                .reduce((s, t) => s + parseInt(t.balance) / Math.pow(10, t.decimals), 0);
             } catch { return 0; }
           }
 
-          async function getTransfersTotal(address) {
+          async function getTransfersTotalForToken(address, tokenAddress) {
             try {
               let total = 0, count = 0, cursor = null, pages = 0;
               const byMonth2026 = new Array(13).fill(0);
               let total2026 = 0, count2026 = 0;
               while (pages < 20) {
-                const url = `https://deep-index.moralis.io/api/v2.2/${address}/erc20/transfers?chain=0x89&contract_addresses[]=${USDT}&limit=100${cursor ? '&cursor=' + cursor : ''}`;
+                const url = `https://deep-index.moralis.io/api/v2.2/${address}/erc20/transfers?chain=0x89&contract_addresses[]=${tokenAddress}&limit=100${cursor ? '&cursor=' + cursor : ''}`;
                 const data = await fetchJson(url, { headers: { 'accept': 'application/json', 'X-API-Key': MORALIS_KEY } });
                 if (!data.result?.length) break;
                 data.result
@@ -130,6 +140,22 @@ jobs:
               }
               return { total, count, total2026, count2026, byMonth2026 };
             } catch { return { total: 0, count: 0, total2026: 0, count2026: 0, byMonth2026: new Array(13).fill(0) }; }
+          }
+
+          async function getTransfersTotal(address) {
+            const [usdt, usdc] = await Promise.all([
+              getTransfersTotalForToken(address, USDT),
+              getTransfersTotalForToken(address, USDC),
+            ]);
+            const byMonth2026 = new Array(13).fill(0);
+            for (let i = 0; i < 13; i++) byMonth2026[i] = usdt.byMonth2026[i] + usdc.byMonth2026[i];
+            return {
+              total: usdt.total + usdc.total,
+              count: usdt.count + usdc.count,
+              total2026: usdt.total2026 + usdc.total2026,
+              count2026: usdt.count2026 + usdc.count2026,
+              byMonth2026,
+            };
           }
 
           function httpsGetFollowRedirects(url, maxRedirects = 5) {
@@ -188,7 +214,6 @@ jobs:
                 result[proyecto].totalEur += importeEur;
                 result[proyecto].totalUsd += usd;
                 result[proyecto].count++;
-                // Desglose mensual para budget
                 if (fecha) {
                   const f = String(fecha);
                   let yr, mo;
@@ -204,20 +229,22 @@ jobs:
           }
 
           async function main() {
-            console.log('Loading safes from JSONbin...');
+            console.log('Loading safes from Firebase...');
             const SAFES = await loadSafes();
             console.log(`Loaded ${SAFES.length} safes:`, SAFES.map(s => s.name).join(', '));
+
+            console.log('Loading budget from Firebase...');
+            const BUDGET_2026 = await loadBudget();
+            console.log('Budget Ene:', BUDGET_2026[0].goal);
 
             console.log('Fetching fiat data...');
             const fiatData = await fetchFiat(SAFES);
 
-            console.log('Fetching blockchain data...');
+            console.log('Fetching blockchain data (USDT + USDC)...');
             let totalCripto = 0, totalCriptoTxs = 0;
-            const safeRows = [];
-            
-
             let totalCripto2026 = 0, totalCripto2026Txs = 0;
             const mCripto2026 = new Array(13).fill(0);
+            const safeRows = [];
 
             for (const safe of SAFES) {
               const [balance, transfers] = await Promise.all([
@@ -233,13 +260,11 @@ jobs:
               safeRows.push({ name: safe.name, fiatUsd: fiat.totalUsd, fiatEur: fiat.totalEur, cripto: transfers.total, total: fiat.totalUsd + transfers.total, inversores: fiat.count });
             }
 
-            // Totales consolidado
             const totalFiatUsd = safeRows.reduce((s, r) => s + r.fiatUsd, 0);
             const totalFiatEur = safeRows.reduce((s, r) => s + r.fiatEur, 0);
             const totalInversores = safeRows.reduce((s, r) => s + r.inversores, 0);
             const totalCapital = totalFiatUsd + totalCripto;
 
-            // Totales 2026
             const mFiat2026 = new Array(13).fill(0);
             Object.values(fiatData).forEach(sf => {
               Object.entries(sf.byMonth || {}).forEach(([mo, usd]) => { mFiat2026[parseInt(mo)] += usd; });
@@ -247,14 +272,11 @@ jobs:
             const totalFiat2026 = mFiat2026.reduce((s, v) => s + v, 0);
             const total2026 = totalFiat2026 + totalCripto2026;
 
-            // Budget 2026
-            const mFiat = mFiat2026;
-
-            const nowMo = new Date().getMonth(); // 0-based
+            const nowMo = new Date().getMonth();
             let ytdGoal = 0, ytdReal = 0;
             const budgetRows = BUDGET_2026.map((b, i) => {
               const mo = i + 1;
-              const real = mFiat[mo] + mCripto2026[mo];
+              const real = mFiat2026[mo] + mCripto2026[mo];
               const hasPassed = i <= nowMo;
               if (hasPassed) { ytdGoal += b.goal; ytdReal += real; }
               const pct = hasPassed && b.goal > 0 ? (real / b.goal * 100).toFixed(1) : null;
@@ -265,7 +287,6 @@ jobs:
             const ytdPct = ytdGoal > 0 ? (ytdReal / ytdGoal * 100) : 0;
             const ytdGap = ytdGoal - ytdReal;
 
-            // Build HTML email
             const today = new Date().toLocaleDateString('es-ES', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
             const safeRowsHtml = safeRows.map(r => `
@@ -302,14 +323,12 @@ jobs:
             <body style="margin:0;padding:0;background:#0f172a;font-family:monospace;">
               <div style="max-width:700px;margin:0 auto;padding:32px 16px;">
 
-                <!-- Header -->
                 <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:24px 28px;margin-bottom:20px;">
                   <div style="font-size:1.3em;font-weight:700;color:#f1f5f9;margin-bottom:4px;">📊 Raised Capital — Reporte Diario</div>
                   <div style="font-size:0.85em;color:#64748b;text-transform:capitalize;">${today}</div>
                 </div>
 
-                <!-- KPIs consolidado -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+                <div style="margin-bottom:20px;">
                   <table width="100%" style="border-collapse:collapse;">
                     <tr>
                       <td style="padding:0 6px 12px 0;">
@@ -330,7 +349,7 @@ jobs:
                     <tr>
                       <td style="padding:0 6px 0 0;">
                         <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;border-left:4px solid #fb923c;padding:16px 20px;">
-                          <div style="font-size:0.72em;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Cripto USDT</div>
+                          <div style="font-size:0.72em;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">Cripto USDT+USDC</div>
                           <div style="font-size:1.6em;font-weight:700;color:#fb923c;">${fmt(totalCripto)}</div>
                           <div style="font-size:0.72em;color:#475569;margin-top:4px;">${totalCriptoTxs} transacciones</div>
                         </div>
@@ -346,7 +365,6 @@ jobs:
                   </table>
                 </div>
 
-                <!-- Budget YTD -->
                 <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
                   <div style="font-size:0.8em;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:16px;">🎯 Budget 2026 — YTD</div>
                   <table width="100%" style="border-collapse:collapse;">
@@ -377,8 +395,6 @@ jobs:
                       </td>
                     </tr>
                   </table>
-
-                  <!-- Budget tabla mensual -->
                   <table width="100%" style="border-collapse:collapse;font-size:0.82em;margin-top:8px;">
                     <thead>
                       <tr style="color:#475569;font-size:0.8em;text-transform:uppercase;">
@@ -394,7 +410,6 @@ jobs:
                   </table>
                 </div>
 
-                <!-- 2026 KPIs -->
                 <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
                   <div style="font-size:0.8em;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:16px;">📅 Capital 2026</div>
                   <table width="100%" style="border-collapse:collapse;">
@@ -423,7 +438,6 @@ jobs:
                   </table>
                 </div>
 
-                <!-- Detalle por safe -->
                 <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
                   <div style="font-size:0.8em;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:16px;">📋 Detalle por Safe</div>
                   <table width="100%" style="border-collapse:collapse;font-size:0.82em;">
@@ -449,31 +463,23 @@ jobs:
                   </table>
                 </div>
 
-                <!-- Link a la app -->
                 <div style="text-align:center;margin-bottom:20px;">
                   <a href="${APP_URL}" style="display:inline-block;background:#00d4aa;color:#0f172a;text-decoration:none;font-weight:700;font-family:monospace;font-size:0.95em;padding:14px 36px;border-radius:9px;">
                     📊 Ver Dashboard Completo →
                   </a>
                 </div>
 
-                <!-- Footer -->
                 <div style="text-align:center;color:#334155;font-size:0.72em;padding:8px;">
-                  Raised Capital · Reental · Polygon · ${today}
+                  Raised Capital · Reental · Polygon · USDT + USDC · ${today}
                 </div>
               </div>
             </body>
             </html>
             `;
 
-            // Parse recipients
             const recipients = (process.env.RECIPIENTS || '').split(',').map(e => e.trim()).filter(Boolean).map(email => ({ email }));
+            if (recipients.length === 0) { console.error('No recipients'); process.exit(1); }
 
-            if (recipients.length === 0) {
-              console.error('No recipients configured in REPORT_RECIPIENTS secret');
-              process.exit(1);
-            }
-
-            // Send via Brevo
             const payload = JSON.stringify({
               sender: { name: 'Raised Capital', email: 'finanzas@reental.co' },
               to: recipients,
