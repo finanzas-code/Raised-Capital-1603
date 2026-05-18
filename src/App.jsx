@@ -17,13 +17,22 @@ const LOGO_SRC = 'https://drive.google.com/file/d/1Nv5iDeb8nk44OeKr0jRwhy0I4NHYW
 const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
 async function loadSafesFromJSONBin() {
-  try {
-    const res = await fetch(`${FIREBASE_URL}/safes.json`);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (Array.isArray(data) && data.length > 0) return data;
-    return null;
-  } catch (e) { console.error('[Firebase] Error cargando:', e.message); return null; }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${FIREBASE_URL}/safes.json`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        console.log(`[Firebase] ${data.length} safes cargados (intento ${attempt})`);
+        return data;
+      }
+      return null;
+    } catch (e) { 
+      console.error(`[Firebase] Error cargando (intento ${attempt}):`, e.message);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+  return null;
 }
 
 async function saveSafesToJSONBin(safes) {
@@ -548,11 +557,21 @@ function Dashboard() {
     (async () => {
       try {
         const stored = await loadSafesFromJSONBin();
-        if (stored) setSafes(stored);
+        if (stored && stored.length > 0) {
+          setSafes(stored);
+        } else {
+          // Firebase vacío o error — usar defaults pero NO guardar automáticamente
+          console.log('[Firebase] Sin datos — usando defaults locales, no se sobreescribe Firebase');
+          setSafes(DEFAULT_SAFES);
+        }
         const storedBudget = await loadBudgetFromFirebase();
         if (storedBudget) setBudget2026(storedBudget);
         setStorageReady(true);
-      } catch (e) { setStorageError(true); setStorageReady(true); }
+      } catch (e) { 
+        console.error('[Firebase] Error en carga inicial:', e);
+        setStorageError(true); 
+        setStorageReady(true); 
+      }
     })();
   }, []);
 
