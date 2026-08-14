@@ -45,7 +45,13 @@ jobs:
             try {
               const data = await fetchJson(`${FIREBASE_URL}/safes.json`);
               if (Array.isArray(data) && data.length > 0) {
-                return data.map(s => ({ address: s.address, name: s.name }));
+                // Mantener soldOut y frozenData para usarlos en el workflow
+                return data.map(s => ({
+                  address: s.address,
+                  name: s.name,
+                  soldOut: s.soldOut || false,
+                  frozenData: s.frozenData || null,
+                }));
               }
             } catch(e) { console.error('Firebase error:', e.message); }
             console.log('Usando DEFAULT_SAFES como fallback');
@@ -247,17 +253,53 @@ jobs:
             const safeRows = [];
 
             for (const safe of SAFES) {
-              const [balance, transfers] = await Promise.all([
-                getBalance(safe.address),
-                getTransfersTotal(safe.address)
-              ]);
               const fiat = fiatData[safe.name] || { totalEur: 0, totalUsd: 0, count: 0, byMonth: {} };
-              totalCripto += transfers.total;
-              totalCriptoTxs += transfers.count;
-              totalCripto2026 += transfers.total2026;
-              totalCripto2026Txs += transfers.count2026;
-              transfers.byMonth2026.forEach((v, i) => { mCripto2026[i] += v; });
-              safeRows.push({ name: safe.name, fiatUsd: fiat.totalUsd, fiatEur: fiat.totalEur, cripto: transfers.total, total: fiat.totalUsd + transfers.total, inversores: fiat.count });
+
+              if (safe.soldOut && safe.frozenData) {
+                // Safe cerrado — usar datos congelados, no consultar Moralis
+                console.log(`${safe.name}: SOLD OUT — usando frozenData`);
+                const fd = safe.frozenData;
+                const criptoUsd = fd.criptoUsd || 0;
+                const criptoTxs = fd.criptoTxs || 0;
+                const criptoUsd2026 = fd.criptoUsd2026 || 0;
+                const criptoTxs2026 = fd.criptoTxs2026 || 0;
+                // Fiat: usar frozenData si existe, si no el sheet
+                const fiatUsd = fd.fiatUsd || fiat.totalUsd || 0;
+                const fiatEur = fd.fiatEur || fiat.totalEur || 0;
+                const inversores = fd.inversores || fiat.count || 0;
+                totalCripto += criptoUsd;
+                totalCriptoTxs += criptoTxs;
+                totalCripto2026 += criptoUsd2026;
+                totalCripto2026Txs += criptoTxs2026;
+                // Distribuir cripto 2026 al mes de cierre
+                if (fd.date) {
+                  const parts = fd.date.split('/');
+                  const mo = parseInt(parts[1]);
+                  if (mo >= 1 && mo <= 12) mCripto2026[mo] += criptoUsd2026;
+                }
+                // Fiat 2026 desde frozenData
+                if (fd.fiatUsd2026) {
+                  const parts = (fd.date || '').split('/');
+                  const mo = parseInt(parts[1]);
+                  if (mo >= 1 && mo <= 12) {
+                    // Ya incluido en mFiat2026 vía sheet o frozenData
+                  }
+                }
+                safeRows.push({ name: safe.name, fiatUsd, fiatEur, cripto: criptoUsd, total: fiatUsd + criptoUsd, inversores, soldOut: true });
+              } else {
+                // Safe activo — consultar Moralis
+                console.log(`${safe.name}: activo — consultando blockchain`);
+                const [balance, transfers] = await Promise.all([
+                  getBalance(safe.address),
+                  getTransfersTotal(safe.address)
+                ]);
+                totalCripto += transfers.total;
+                totalCriptoTxs += transfers.count;
+                totalCripto2026 += transfers.total2026;
+                totalCripto2026Txs += transfers.count2026;
+                transfers.byMonth2026.forEach((v, i) => { mCripto2026[i] += v; });
+                safeRows.push({ name: safe.name, fiatUsd: fiat.totalUsd, fiatEur: fiat.totalEur, cripto: transfers.total, total: fiat.totalUsd + transfers.total, inversores: fiat.count, soldOut: false });
+              }
             }
 
             const totalFiatUsd = safeRows.reduce((s, r) => s + r.fiatUsd, 0);
