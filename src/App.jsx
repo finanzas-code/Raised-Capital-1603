@@ -144,7 +144,7 @@ async function fetchFiatFromSheet(safes) {
     const lines = csv.trim().split('\n');
     if (lines.length < 2) throw new Error('Sheet vacía');
     const COL = { fecha: 4, proyecto: 5, detalle: 7, importeEur: 8, usd: 11, estado: 13 };
-    const SAFE_NAMES = safes.filter(s => !s.soldOut).map(s => s.name);
+    const SAFE_NAMES = safes.map(s => s.name); // Incluir sold out para budget mensual
     const parseNum = (str) => {
       const s = (str || '').replace(/"/g, '').trim();
       if (!s) return 0;
