@@ -290,10 +290,16 @@ function PromedioSection({ safes, fiatData, data, COLORS }) {
   const diffDays = Math.max(1, Math.round((hastaDate - desdeDate) / 86400000) + 1);
 
   const safeStats = safes.map((safe, idx) => {
-    if (safe.soldOut && safe.frozenData) {
-      const totalUsd = safe.frozenData.totalUsd || 0;
-      return { safe, idx, fiatUsd: safe.frozenData.fiatUsd||0, criptoUsd: safe.frozenData.criptoUsd||0, totalUsd, fiatCount: safe.frozenData.inversores||0, criptoCount: safe.frozenData.criptoTxs||0, promDia: totalUsd/diffDays, activeDays: diffDays, minDate: null, maxDate: null, color: COLORS[idx] };
-    }
+if (safe.soldOut && safe.frozenData) {
+  // FIAT: usar fiatData con txs reales fechadas, no frozenData que no tiene desglose mensual
+  const sf = fiatData[safe.name];
+  if (sf) {
+    (sf.txs||[]).forEach(tx=>{try{const f=String(tx.fecha||'');let yr,mo;if(f.includes('/')){const p=f.split('/');yr=p[2];mo=parseInt(p[1]);}else{yr=f.slice(0,4);mo=parseInt(f.slice(5,7));}if(yr==='2026'&&mo>=1&&mo<=12)mFiat[mo]+=(tx.importe||0)*EUR_USD;}catch(e){}});
+  } else if (safe.frozenData.fiatUsd2026!=null) {
+    try{const parts=(safe.frozenData.date||'').split('/');const mo=parseInt(parts[1]);if(mo>=1&&mo<=12)mFiat[mo]+=safe.frozenData.fiatUsd2026;}catch(e){}
+  }
+  // CRIPTO: sin desglose mensual, imputar al mes de cierre
+  try{const parts=(safe.frozenData.date||'').split('/');const mo=parseInt(parts[1]);if(mo>=1&&mo<=12)mCripto[mo]+=(safe.frozenData.criptoUsd2026!=null)?safe.frozenData.criptoUsd2026:parseFloat(safe.metrics.total||0);}catch(e){}
     let fiatEur = 0, fiatCount = 0;
     const sf = fiatData[safe.name];
     if (sf) (sf.txs||[]).forEach(tx => { const d = parseFecha(tx.fecha); if (d && d >= desdeDate && d <= hastaDate) { fiatEur += tx.importe||0; fiatCount++; } });
