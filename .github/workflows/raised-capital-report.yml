@@ -18,6 +18,7 @@ jobs:
           MORALIS_KEY: ${{ secrets.MORALIS_KEY }}
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           APP_URL: ${{ secrets.APP_URL }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
           node << 'EOF'
           const https = require('https');
@@ -27,36 +28,32 @@ jobs:
           const BREVO_KEY = process.env.BREVO_API_KEY;
           const APP_URL = process.env.APP_URL || 'https://raised-capital-1603.vercel.app';
           const EUR_USD = 1.1855;
+          // Los avisos de fallo van solo a finanzas (no al board)
+          const ALERT_TO = [process.env.ALERT_EMAIL || 'finanzas@reental.co'];
 
           // ── Firebase (sustituye JSONbin) ──
           const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
-          const DEFAULT_SAFES = [
-            { address: '0x7FB1e8a839B81C9Ae4CebAd6f259106d77eD83D2', name: 'CME-1' },
-            { address: '0x17BF9A5bF74181AaB6CbB7EC80e16B7F1bFDF5a7', name: 'RET-2' },
-            { address: '0x7590219fDAFcC4e48c8c4E9178722d916d7EE305', name: 'SLA-3' },
-            { address: '0x8823eed2A3644edC49abd6628c777bFC3f4243F0', name: 'GRX-4' },
-            { address: '0xba9759D878c0Ff656f1C1d9670F4736E162F61AF', name: 'LVT-2' },
-            { address: '0xfd1Fb402260dA84435325b2aCD5Ec026a1b2DbB3', name: 'ABD-1' },
-            { address: '0xf66350Eb77Ec7aaF1A54770453D3cf99C112299f', name: 'SLA-4' },
-          ];
-
-          async function loadSafes() {
-            try {
-              const data = await fetchJson(`${FIREBASE_URL}/safes.json`);
-              if (Array.isArray(data) && data.length > 0) {
-                // Mantener soldOut y frozenData para usarlos en el workflow
-                return data.map(s => ({
-                  address: s.address,
-                  name: s.name,
-                  soldOut: s.soldOut || false,
-                  frozenData: s.frozenData || null,
-                }));
+            async function loadSafes() {
+              // Sin fallback silencioso: si no hay lista fiable de safes, NO se envía el informe.
+              let lastErr = 'sin respuesta';
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  const data = await fetchJson(`${FIREBASE_URL}/safes.json`);
+                  // Firebase puede devolver un array o un objeto con claves numéricas
+                  const list = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : []);
+                  const safes = list.filter(s => s && s.address && s.name);
+                  if (safes.length > 0) {
+                    // Mantener soldOut y frozenData para usarlos en el workflow
+                    return safes.map(s => ({ address: s.address, name: s.name, soldOut: s.soldOut || false, frozenData: s.frozenData || null }));
+                  }
+                  lastErr = 'respuesta sin safes: ' + JSON.stringify(data).slice(0, 200);
+                } catch (e) { lastErr = e.message; }
+                console.error(`Firebase safes (intento ${attempt}/3): ${lastErr}`);
+                await new Promise(r => setTimeout(r, 2000 * attempt));
               }
-            } catch(e) { console.error('Firebase error:', e.message); }
-            console.log('Usando DEFAULT_SAFES como fallback');
-            return DEFAULT_SAFES;
-          }
+              throw new Error('No se pudo cargar la lista de safes de Firebase: ' + lastErr);
+            }
 
           async function loadBudget() {
             try {
@@ -89,6 +86,25 @@ jobs:
           function fmt(n) {
             return '$' + parseFloat(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
           }
+
+            async function sendEmail(subject, htmlContent, toList) {
+              const recipients = (toList || (process.env.RECIPIENTS || '').split(',')).map(e => e.trim()).filter(Boolean).map(email => ({ email }));
+              if (recipients.length === 0) throw new Error('No recipients');
+              const payload = JSON.stringify({ sender: { name: 'Raised Capital', email: 'finanzas@reental.co' }, to: recipients, subject, htmlContent });
+              await new Promise((resolve, reject) => {
+                const req = https.request({
+                  hostname: 'api.brevo.com', path: '/v3/smtp/email', method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'api-key': BREVO_KEY, 'Content-Length': Buffer.byteLength(payload) },
+                }, res => {
+                  let data = '';
+                  res.on('data', c => data += c);
+                  res.on('end', () => (res.statusCode >= 200 && res.statusCode < 300) ? resolve() : reject(new Error('Brevo API error: ' + res.statusCode + ' ' + data)));
+                });
+                req.on('error', reject);
+                req.write(payload);
+                req.end();
+              });
+            }
 
           function fetchJson(url, options = {}) {
             return new Promise((resolve, reject) => {
@@ -307,6 +323,24 @@ jobs:
             const totalInversores = safeRows.reduce((s, r) => s + r.inversores, 0);
             const totalCapital = totalFiatUsd + totalCripto;
 
+            // ── Control de calidad: NO enviar cifras incompletas ──
+            const prev = await fetchJson(`${FIREBASE_URL}/lastReport.json`);
+            const problems = [];
+            if (!(totalCapital > 0)) problems.push('Capital total = 0');
+            if (prev && typeof prev === 'object' && prev.total > 0) {
+              if (SAFES.length < prev.safes) problems.push(`Nº de safes: ${SAFES.length} hoy vs ${prev.safes} en el último informe`);
+              if (totalCapital < prev.total * 0.95) problems.push(`Capital total ${fmt(totalCapital)} vs ${fmt(prev.total)} en el último informe (caída > 5%)`);
+            }
+            if (problems.length) {
+              console.error('INFORME BLOQUEADO:', problems.join(' | '));
+              await sendEmail(
+                `⚠️ Raised Capital — informe NO enviado (${new Date().toLocaleDateString('es-ES')})`,
+                `<div style="font-family:monospace;padding:24px;"><h3>⚠️ Informe diario bloqueado</h3><p>Las cifras de hoy no superan el control de calidad, así que no se ha enviado el informe para no reportar datos incompletos.</p><ul>${problems.map(p => `<li>${p}</li>`).join('')}</ul><p>Revisar la lista de safes en Firebase y la ejecución en GitHub Actions.</p></div>`,
+                ALERT_TO
+              );
+              process.exit(1);
+            }
+
             const mFiat2026 = new Array(13).fill(0);
             Object.values(fiatData).forEach(sf => {
               Object.entries(sf.byMonth || {}).forEach(([mo, usd]) => { mFiat2026[parseInt(mo)] += usd; });
@@ -519,45 +553,27 @@ jobs:
             </html>
             `;
 
-            const recipients = (process.env.RECIPIENTS || '').split(',').map(e => e.trim()).filter(Boolean).map(email => ({ email }));
-            if (recipients.length === 0) { console.error('No recipients'); process.exit(1); }
+            await sendEmail(`📊 Raised Capital — ${new Date().toLocaleDateString('es-ES')} — ${fmt(totalCapital)}`, html);
+            console.log('Email sent successfully!');
 
-            const payload = JSON.stringify({
-              sender: { name: 'Raised Capital', email: 'finanzas@reental.co' },
-              to: recipients,
-              subject: `📊 Raised Capital — ${new Date().toLocaleDateString('es-ES')} — ${fmt(totalCapital)}`,
-              htmlContent: html,
-            });
-
-            await new Promise((resolve, reject) => {
-              const options = {
-                hostname: 'api.brevo.com',
-                path: '/v3/smtp/email',
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'api-key': BREVO_KEY,
-                  'Content-Length': Buffer.byteLength(payload),
-                },
-              };
-              const req = https.request(options, res => {
-                let data = '';
-                res.on('data', c => data += c);
-                res.on('end', () => {
-                  if (res.statusCode >= 200 && res.statusCode < 300) {
-                    console.log('Email sent successfully!');
-                    resolve();
-                  } else {
-                    console.error('Brevo error:', res.statusCode, data);
-                    reject(new Error('Brevo API error: ' + res.statusCode));
-                  }
-                });
-              });
-              req.on('error', reject);
-              req.write(payload);
-              req.end();
-            });
+            // Guardar referencia para el control de calidad del informe siguiente
+            const refBody = JSON.stringify({ total: totalCapital, safes: SAFES.length, date: new Date().toISOString() });
+            await fetchJson(`${FIREBASE_URL}/lastReport.json`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(refBody) },
+              body: refBody,
+            }).catch(e => console.error('No se pudo guardar lastReport:', e.message));
           }
 
-          main().catch(e => { console.error(e); process.exit(1); });
+          main().catch(async e => {
+            console.error(e);
+            try {
+              await sendEmail(
+                `⚠️ Raised Capital — informe NO enviado (${new Date().toLocaleDateString('es-ES')})`,
+                `<div style="font-family:monospace;padding:24px;"><h3>⚠️ Fallo en el informe diario</h3><p>${String(e.message).slice(0, 500)}</p><p>Revisar la ejecución en GitHub Actions.</p></div>`,
+                ALERT_TO
+              );
+            } catch (e2) { console.error('Tampoco se pudo enviar el aviso:', e2.message); }
+            process.exit(1);
+          });
           EOF
