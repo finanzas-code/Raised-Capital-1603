@@ -8,18 +8,112 @@ const MORALIS_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImVjZGNjZD
 const USDT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
 const USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 const EUR_USD = 1.1855;
-const ADMIN_PIN = '2024';
-const LOGIN_USER = 'reental';
-const LOGIN_PASS = 'raised2026';
 const SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTN35Qf_kApsWveC1A7blqmsYqTMbLqrbQk0rI7lgfKBtle3rWA6IcNc2VkFfqI106s_LO3zFne5Uga/pub?gid=0&single=true&output=csv';
 const LOGO_SRC = 'https://drive.google.com/file/d/1Nv5iDeb8nk44OeKr0jRwhy0I4NHYWCfy/view?usp=drive_link';
 
 const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
+// ─── FIREBASE AUTH ───
+// La Web API Key de Firebase es pública por diseño (no es un secreto): identifica el proyecto.
+// Dónde está: Firebase → ⚙ Configuración del proyecto → General → "Clave de API web".
+const FIREBASE_API_KEY = 'PEGA_AQUI_LA_WEB_API_KEY';
+// Solo estos usuarios ven el panel Admin (la seguridad real la aplican las reglas de Firebase).
+const ADMIN_EMAILS = ['finanzas@reental.co'];
+const SESSION_KEY = 'rc_fb_session';
+
+let fbSession = (() => {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || null; } catch { return null; }
+})();
+
+function setFbSession(sess) {
+  fbSession = sess;
+  try {
+    if (sess) sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+    else sessionStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+function fbSignOut() {
+  setFbSession(null);
+  window.dispatchEvent(new Event('rc-auth-lost'));
+}
+
+function sessionFromResponse(email, idToken, refreshToken, expiresIn) {
+  return { email, idToken, refreshToken, expiresAt: Date.now() + (parseInt(expiresIn, 10) || 3600) * 1000 };
+}
+
+async function fbSignIn(email, password) {
+  if (FIREBASE_API_KEY.startsWith('PEGA_AQUI')) throw new Error('Falta configurar la clave de API de Firebase en App.jsx');
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const code = (data && data.error && data.error.message) || '';
+    if (/EMAIL_NOT_FOUND|INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|INVALID_EMAIL|USER_DISABLED/.test(code)) throw new Error('Email o contraseña incorrectos');
+    if (/TOO_MANY_ATTEMPTS/.test(code)) throw new Error('Demasiados intentos. Espera unos minutos');
+    throw new Error('No se pudo iniciar sesión (' + (code || res.status) + ')');
+  }
+  setFbSession(sessionFromResponse(data.email, data.idToken, data.refreshToken, data.expiresIn));
+  return fbSession;
+}
+
+async function fbGetToken() {
+  if (!fbSession) throw new Error('Sesión no iniciada');
+  if (Date.now() < fbSession.expiresAt - 60000) return fbSession.idToken;
+  const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(fbSession.refreshToken)}`,
+  });
+  const data = await res.json();
+  if (!res.ok) { fbSignOut(); throw new Error('Sesión caducada'); }
+  setFbSession(sessionFromResponse(fbSession.email, data.id_token, data.refresh_token, data.expires_in));
+  return fbSession.idToken;
+}
+
+// Llamada a Firebase Realtime Database con el token del usuario.
+// Si Firebase responde 401 se renueva el token y se reintenta una vez; si sigue en 401 es falta de permisos
+// (se devuelve la respuesta para que quien llama muestre un error claro; no se cierra la sesión).
+async function fbFetch(path, options, retried) {
+  const token = await fbGetToken();
+  const res = await fetch(`${FIREBASE_URL}/${path}.json?auth=${encodeURIComponent(token)}`, options);
+  if (res.status === 401 && !retried) {
+    if (fbSession) setFbSession({ ...fbSession, expiresAt: 0 });
+    return fbFetch(path, options, true);
+  }
+  return res;
+}
+
+// Modifica la lista de safes de forma SEGURA: lee SIEMPRE lo último de Firebase, aplica el cambio y guarda
+// solo si nadie más la ha tocado entretanto (ETag). Nunca sobrescribe con datos locales antiguos.
+async function updateSafes(mutator) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const res = await fbFetch('safes', { headers: { 'X-Firebase-ETag': 'true' } });
+    if (!res.ok) throw new Error(res.status === 401 ? 'Tu usuario no tiene permiso para leer los safes' : 'No se pudo leer Firebase (HTTP ' + res.status + ')');
+    const etag = res.headers.get('ETag');
+    const raw = await res.json();
+    const current = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+    const next = mutator(current);
+    const put = await fbFetch('safes', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(etag ? { 'if-match': etag } : {}) },
+      body: JSON.stringify(next),
+    });
+    if (put.status === 412) continue; // alguien cambió la lista mientras tanto: reintenta con lo último
+    if (put.status === 401) throw new Error('Firebase rechazó el guardado: tu usuario no tiene permiso de escritura. Entra con finanzas@reental.co');
+    if (!put.ok) throw new Error('No se pudo guardar en Firebase (HTTP ' + put.status + ')');
+    return next;
+  }
+  throw new Error('Otra persona está editando los safes a la vez. Recarga la página e inténtalo de nuevo');
+}
+
 async function loadSafesFromJSONBin() {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const res = await fetch(`${FIREBASE_URL}/safes.json`);
+      const res = await fbFetch('safes');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -29,26 +123,16 @@ async function loadSafesFromJSONBin() {
       return null;
     } catch (e) { 
       console.error(`[Firebase] Error cargando (intento ${attempt}):`, e.message);
+      if (!fbSession) return null;
       if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
     }
   }
   return null;
 }
 
-async function saveSafesToJSONBin(safes) {
-  try {
-    const res = await fetch(`${FIREBASE_URL}/safes.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(safes),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return true;
-  } catch (e) { console.error('[Firebase] Error guardando:', e.message); return false; }
-}
 async function loadBudgetFromFirebase() {
   try {
-    const res = await fetch(`${FIREBASE_URL}/budget2026.json`);
+    const res = await fbFetch('budget2026');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (Array.isArray(data) && data.length === 12) return data;
@@ -58,7 +142,7 @@ async function loadBudgetFromFirebase() {
 
 async function saveBudgetToFirebase(budget) {
   try {
-    const res = await fetch(`${FIREBASE_URL}/budget2026.json`, {
+    const res = await fbFetch('budget2026', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(budget),
@@ -244,15 +328,18 @@ function LoginScreen({ onLogin }) {
   const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const handleLogin = () => {
-    if (user === LOGIN_USER && pass === LOGIN_PASS) {
-      sessionStorage.setItem('rc_auth', 'ok');
+  const handleLogin = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      await fbSignIn(user.trim().toLowerCase(), pass);
       onLogin();
-    } else {
-      setError('Usuario o contraseña incorrectos');
+    } catch (e) {
+      setError(e.message);
       setPass('');
-    }
+    } finally { setBusy(false); }
   };
 
   return (
@@ -262,18 +349,18 @@ function LoginScreen({ onLogin }) {
         <div style={{ fontWeight:800, color:'#f1f5f9', fontSize:'1.3em', marginBottom:4 }}>Raised Capital</div>
         <div style={{ color:'#475569', fontSize:'0.8em', marginBottom:28 }}>Acceso restringido</div>
         <div style={{ textAlign:'left', marginBottom:12 }}>
-          <div style={{ fontSize:'0.75em', color:'#64748b', marginBottom:5 }}>Usuario</div>
-          <input autoFocus value={user} onChange={e=>setUser(e.target.value)} onKeyDown={e=>e.key==='Enter'&&document.getElementById('rc_pass').focus()} placeholder="usuario"
+          <div style={{ fontSize:'0.75em', color:'#64748b', marginBottom:5 }}>Email</div>
+          <input autoFocus value={user} onChange={e=>setUser(e.target.value)} onKeyDown={e=>e.key==='Enter'&&document.getElementById('rc_pass').focus()} placeholder="email" type="email" autoComplete="username"
             style={{ width:'100%', background:'#0f172a', border:'1px solid #334155', borderRadius:8, padding:'10px 14px', color:'#f1f5f9', fontSize:'0.95em', fontFamily:'monospace', outline:'none' }}/>
         </div>
         <div style={{ textAlign:'left', marginBottom:20 }}>
           <div style={{ fontSize:'0.75em', color:'#64748b', marginBottom:5 }}>Contraseña</div>
-          <input id="rc_pass" type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleLogin()} placeholder="••••••••"
+          <input id="rc_pass" type="password" autoComplete="current-password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleLogin()} placeholder="••••••••"
             style={{ width:'100%', background:'#0f172a', border:`1px solid ${error?'#ef4444':'#334155'}`, borderRadius:8, padding:'10px 14px', color:'#f1f5f9', fontSize:'0.95em', fontFamily:'monospace', outline:'none' }}/>
         </div>
         {error && <div style={{ color:'#ef4444', fontSize:'0.8em', marginBottom:14 }}>⚠️ {error}</div>}
         <button onClick={handleLogin} style={{ width:'100%', background:'#00d4aa', color:'#0f172a', border:'none', borderRadius:9, padding:'12px', fontSize:'1em', fontWeight:700, cursor:'pointer', fontFamily:'monospace' }}>
-          Entrar →
+          {busy ? 'Entrando…' : 'Entrar →'}
         </button>
       </div>
     </div>
@@ -405,7 +492,7 @@ function BudgetEditor({ budget2026, handleSaveBudget, saving }) {
 }
 
 // ─── ADMIN MODAL ───
-function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinSubmit, handleCloseAdmin, safes, editIdx, setEditIdx, editName, setEditName, editAddr, setEditAddr, handleEditSave, handleDeleteSafe, handleToggleSoldOut, newSafeName, setNewSafeName, newSafeAddr, setNewSafeAddr, addError, addSuccess, handleAddSafe, handleResetDefaults, saving, data, budget2026, handleSaveBudget }) {
+function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinSubmit, handleCloseAdmin, safes, editIdx, setEditIdx, editName, setEditName, editAddr, setEditAddr, handleEditSave, handleDeleteSafe, handleToggleSoldOut, newSafeName, setNewSafeName, newSafeAddr, setNewSafeAddr, addError, addSuccess, handleAddSafe, saving, data, budget2026, handleSaveBudget }) {
   const hasData = !!data;
   return (
     <div style={{ position:'fixed', inset:0, background:'#00000099', zIndex:999, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
@@ -429,11 +516,7 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
         {!adminUnlocked ? (
           <div style={{ textAlign:'center', padding:'20px 0' }}>
             <div style={{ fontSize:'2.5em', marginBottom:16 }}>🔒</div>
-            <div style={{ color:'#94a3b8', fontSize:'0.9em', marginBottom:20 }}>Introduce el PIN de administrador</div>
-            <input autoFocus type="password" value={pinInput} onChange={e=>setPinInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handlePinSubmit()} placeholder="••••" maxLength={8}
-              style={{ background:'#0f172a', border:'1px solid '+(pinError?'#ef4444':'#334155'), borderRadius:8, padding:'12px 16px', color:'#f1f5f9', fontSize:'1.2em', textAlign:'center', width:160, letterSpacing:'0.3em', outline:'none', fontFamily:'monospace' }}/>
-            {pinError && <div style={{ color:'#ef4444', fontSize:'0.8em', marginTop:8 }}>{pinError}</div>}
-            <div style={{ marginTop:16 }}><button onClick={handlePinSubmit} style={{ background:'#00d4aa', color:'#0f172a', border:'none', borderRadius:8, padding:'10px 28px', fontWeight:700, cursor:'pointer', fontFamily:'monospace' }}>Acceder</button></div>
+            <div style={{ color:'#94a3b8', fontSize:'0.9em' }}>Tu usuario no tiene permisos de administrador</div>
           </div>
         ) : (
           <div>
@@ -494,10 +577,6 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
               </button>
             </div>
             <BudgetEditor budget2026={budget2026} handleSaveBudget={handleSaveBudget} saving={saving}/>
-            <div style={{ borderTop:'1px solid #1e293b', paddingTop:16 }}>
-              <div style={{ fontSize:'0.72em', color:'#475569', marginBottom:10 }}>⚠️ Zona de peligro</div>
-              <button onClick={handleResetDefaults} disabled={saving} style={{ background:'#1e293b', color:'#f472b6', border:'1px solid #334155', borderRadius:8, padding:'8px 18px', cursor:'pointer', fontFamily:'monospace', fontSize:'0.82em' }}>🔄 Restaurar Safes por defecto</button>
-            </div>
           </div>
         )}
       </div>
@@ -509,7 +588,12 @@ function AdminModal({ adminUnlocked, pinInput, setPinInput, pinError, handlePinS
 // APP — enruta entre login y dashboard
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(() => sessionStorage.getItem('rc_auth') === 'ok');
+  const [loggedIn, setLoggedIn] = useState(() => !!fbSession);
+  useEffect(() => {
+    const onLost = () => setLoggedIn(false);
+    window.addEventListener('rc-auth-lost', onLost);
+    return () => window.removeEventListener('rc-auth-lost', onLost);
+  }, []);
   if (!loggedIn) return <LoginScreen onLogin={() => setLoggedIn(true)} />;
   return <Dashboard />;
 }
@@ -534,9 +618,9 @@ function Dashboard() {
   const [fiatLastUpdate, setFiatLastUpdate] = useState(null);
   const [fiatLoading, setFiatLoading] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState('');
+  const adminUnlocked = !!fbSession && ADMIN_EMAILS.includes((fbSession.email || '').toLowerCase());
+  const pinInput = '', pinError = '';
+  const setPinInput = () => {};
   const [newSafeName, setNewSafeName] = useState('');
   const [newSafeAddr, setNewSafeAddr] = useState('');
   const [addError, setAddError] = useState('');
@@ -559,6 +643,7 @@ function Dashboard() {
           // Firebase vacío o error — usar defaults pero NO guardar automáticamente
           console.log('[Firebase] Sin datos — usando defaults locales, no se sobreescribe Firebase');
           setSafes(DEFAULT_SAFES);
+          setStorageError(true);
         }
         const storedBudget = await loadBudgetFromFirebase();
         if (storedBudget) setBudget2026(storedBudget);
@@ -571,11 +656,18 @@ function Dashboard() {
     })();
   }, []);
 
-  const persistSafes = async (updated) => {
-    setSaving(true); setSafes(updated);
-    const ok = await saveSafesToJSONBin(updated);
-    if (!ok) setStorageError(true);
-    setSaving(false);
+  // Aplica un cambio sobre la lista REAL de Firebase. La pantalla solo cambia si el guardado se ha confirmado.
+  const persistSafes = async (mutator) => {
+    setSaving(true);
+    try {
+      const next = await updateSafes(mutator);
+      setSafes(next); setStorageError(false);
+      return true;
+    } catch (e) {
+      setStorageError(true);
+      window.alert('⚠️ NO se guardó el cambio.\n\n' + e.message + '\n\nLos safes siguen como estaban.');
+      return false;
+    } finally { setSaving(false); }
   };
 
   const refreshFiat = async (currentSafes) => {
@@ -620,10 +712,7 @@ function Dashboard() {
     finally { setLoading(false); setMsg(''); }
   };
 
-  const handlePinSubmit = () => {
-    if (pinInput === ADMIN_PIN) { setAdminUnlocked(true); setPinError(''); }
-    else { setPinError('PIN incorrecto'); setPinInput(''); }
-  };
+  const handlePinSubmit = () => {};
 
   const handleAddSafe = async () => {
     setAddError(''); setAddSuccess('');
@@ -631,38 +720,41 @@ function Dashboard() {
     if (!isValidAddress(newSafeAddr)) return setAddError('Dirección inválida');
     if (safes.find(s=>s.address.toLowerCase()===newSafeAddr.toLowerCase())) return setAddError('Dirección ya existe');
     if (safes.find(s=>s.name.toLowerCase()===newSafeName.toLowerCase())) return setAddError('Nombre ya existe');
-    const updated = [...safes, { address: newSafeAddr, name: newSafeName.trim().toUpperCase() }];
-    await persistSafes(updated);
+    const addr = newSafeAddr.trim(), name = newSafeName.trim().toUpperCase();
+    const ok = await persistSafes(cur => {
+      if (cur.find(s=>s.address.toLowerCase()===addr.toLowerCase())) throw new Error('Esa dirección ya existe en la lista');
+      if (cur.find(s=>s.name.toLowerCase()===name.toLowerCase())) throw new Error('Ese nombre ya existe en la lista');
+      return [...cur, { address: addr, name }];
+    });
+    if (!ok) return;
     setNewSafeName(''); setNewSafeAddr('');
-    setAddSuccess('Safe añadido ✅'); setTimeout(()=>setAddSuccess(''), 3000);
+    setAddSuccess('Safe añadido y guardado ✅'); setTimeout(()=>setAddSuccess(''), 3000);
     setData(null);
   };
 
   const handleDeleteSafe = async (idx) => {
-    if (!window.confirm('¿Eliminar "'+safes[idx].name+'"?')) return;
-    await persistSafes(safes.filter((_,i)=>i!==idx)); setData(null);
+    const target = safes[idx];
+    if (!window.confirm('¿Eliminar "'+target.name+'"?')) return;
+    const ok = await persistSafes(cur => cur.filter(s => s.address !== target.address));
+    if (ok) setData(null);
   };
 
   const handleEditSave = async (idx) => {
     setAddError('');
     if (!editName.trim()) return setAddError('Nombre vacío');
     if (!isValidAddress(editAddr)) return setAddError('Dirección inválida');
-    await persistSafes(safes.map((s,i)=>i===idx?{...s,name:editName.trim().toUpperCase(),address:editAddr}:s));
-    setEditIdx(null); setData(null);
-  };
-
-  const handleResetDefaults = async () => {
-    if (!window.confirm('¿Restaurar Safes por defecto?')) return;
-    await persistSafes(DEFAULT_SAFES);
-    setAddSuccess('Restaurados ✅'); setTimeout(()=>setAddSuccess(''), 3000); setData(null);
+    const target = safes[idx], name = editName.trim().toUpperCase(), address = editAddr;
+    const ok = await persistSafes(cur => cur.map(s => s.address === target.address ? { ...s, name, address } : s));
+    if (ok) { setEditIdx(null); setData(null); }
   };
 
   const handleToggleSoldOut = async (idx) => {
     const safe = safes[idx];
     if (safe.soldOut) {
       if (!window.confirm(`¿Reactivar "${safe.name}"?`)) return;
-      const updated = safes.map((s,i) => { if (i!==idx) return s; const {soldOut,frozenData,...rest}=s; return rest; });
-      await persistSafes(updated); setData(null); return;
+      const ok = await persistSafes(cur => cur.map(s => { if (s.address !== safe.address) return s; const {soldOut,frozenData,...rest}=s; return rest; }));
+      if (ok) setData(null);
+      return;
     }
     if (!data) return;
     const safeData = data.find(d=>d.name===safe.name);
@@ -677,9 +769,9 @@ function Dashboard() {
     const fiatUsd2026 = (fiatSafe.txs||[]).filter(tx=>getYearFromFecha(tx.fecha)==='2026').reduce((s,tx)=>s+(tx.importe||0)*EUR_USD,0);
     const fiatCount2026 = (fiatSafe.txs||[]).filter(tx=>getYearFromFecha(tx.fecha)==='2026').length;
     if (!window.confirm(`¿Marcar "${safe.name}" como SOLD OUT?\nTotal: ${fmt(totalUsd)}\nDejará de consultar blockchain y sheet.`)) return;
-    const updated = safes.map((s,i)=>i!==idx?s:{...s,soldOut:true,frozenData:{fiatEur:fiatSafe.totalEur,fiatUsd:fiatSafe.totalUsd,inversores:fiatSafe.count,criptoUsd,criptoTxs,totalUsd,balance,date:today,criptoUsd2026,criptoTxs2026,fiatUsd2026,fiatCount2026,total2026:criptoUsd2026+fiatUsd2026}});
-    await persistSafes(updated);
-    setData(prev=>prev?prev.map(d=>d.name===safe.name?{...d,soldOut:true}:d):prev);
+    const frozen = {fiatEur:fiatSafe.totalEur,fiatUsd:fiatSafe.totalUsd,inversores:fiatSafe.count,criptoUsd,criptoTxs,totalUsd,balance,date:today,criptoUsd2026,criptoTxs2026,fiatUsd2026,fiatCount2026,total2026:criptoUsd2026+fiatUsd2026};
+    const ok = await persistSafes(cur => cur.map(s => s.address !== safe.address ? s : { ...s, soldOut: true, frozenData: frozen }));
+    if (ok) setData(prev=>prev?prev.map(d=>d.name===safe.name?{...d,soldOut:true}:d):prev);
   };
 
   const handleSaveBudget = async (newBudget) => {
@@ -690,7 +782,7 @@ function Dashboard() {
     return ok;
   };
 
-  const handleCloseAdmin = () => { setShowAdmin(false); setAdminUnlocked(false); setPinInput(''); setPinError(''); setEditIdx(null); setAddError(''); };
+  const handleCloseAdmin = () => { setShowAdmin(false); setEditIdx(null); setAddError(''); };
 
   const cTotals = data ? { balance:data.reduce((s,d)=>s+parseFloat(d.balance),0).toFixed(2), received:data.reduce((s,d)=>s+parseFloat(d.metrics.total),0).toFixed(2), txs:data.reduce((s,d)=>s+d.metrics.count,0) } : null;
   const fTotals = data
@@ -807,7 +899,7 @@ function Dashboard() {
         </div>
       )}
 
-      {showAdmin && <AdminModal adminUnlocked={adminUnlocked} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} handlePinSubmit={handlePinSubmit} handleCloseAdmin={handleCloseAdmin} safes={safes} editIdx={editIdx} setEditIdx={setEditIdx} editName={editName} setEditName={setEditName} editAddr={editAddr} setEditAddr={setEditAddr} handleEditSave={handleEditSave} handleDeleteSafe={handleDeleteSafe} handleToggleSoldOut={handleToggleSoldOut} newSafeName={newSafeName} setNewSafeName={setNewSafeName} newSafeAddr={newSafeAddr} setNewSafeAddr={setNewSafeAddr} addError={addError} addSuccess={addSuccess} handleAddSafe={handleAddSafe} handleResetDefaults={handleResetDefaults} saving={saving} data={data} budget2026={budget2026} handleSaveBudget={handleSaveBudget}/>}
+      {showAdmin && <AdminModal adminUnlocked={adminUnlocked} pinInput={pinInput} setPinInput={setPinInput} pinError={pinError} handlePinSubmit={handlePinSubmit} handleCloseAdmin={handleCloseAdmin} safes={safes} editIdx={editIdx} setEditIdx={setEditIdx} editName={editName} setEditName={setEditName} editAddr={editAddr} setEditAddr={setEditAddr} handleEditSave={handleEditSave} handleDeleteSafe={handleDeleteSafe} handleToggleSoldOut={handleToggleSoldOut} newSafeName={newSafeName} setNewSafeName={setNewSafeName} newSafeAddr={newSafeAddr} setNewSafeAddr={setNewSafeAddr} addError={addError} addSuccess={addSuccess} handleAddSafe={handleAddSafe} saving={saving} data={data} budget2026={budget2026} handleSaveBudget={handleSaveBudget}/>}
 
       <div style={{borderBottom:'1px solid #1e293b',padding:'16px 24px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12,position:'sticky',top:0,background:'#0f172a',zIndex:10}}>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -816,7 +908,7 @@ function Dashboard() {
             <div style={{fontWeight:700,color:'#f1f5f9',fontSize:'1.1em'}}>Raised Capital</div>
             <div style={{fontSize:'0.78em',color:'#64748b'}}>
               Polygon · {activeCount} activos{soldOutCount>0?` · ${soldOutCount} 🔒`:''} · Fiat + Crypto
-              {storageError?<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Error sync</span>:<span style={{color:'#00d4aa',marginLeft:8}}>· 🌐 Firebase</span>}
+              {storageError?<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Error de sincronización con Firebase (cambios no guardados o lista de respaldo)</span>:<span style={{color:'#00d4aa',marginLeft:8}}>· 🌐 Firebase</span>}
               {fiatSource==='sheet'&&fiatLastUpdate&&<span style={{color:'#00d4aa',marginLeft:8}}>· 📊 Sheet {fiatLastUpdate.toLocaleTimeString()}</span>}
               {fiatSource==='fallback'&&<span style={{color:'#fb923c',marginLeft:8}}>· ⚠️ Fiat local</span>}
             </div>
@@ -825,6 +917,7 @@ function Dashboard() {
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           {lastUpdate&&<span style={{fontSize:'0.75em',color:'#475569'}}>{lastUpdate.toLocaleTimeString()} · {loadTime}s</span>}
           <button onClick={()=>setShowAdmin(true)} style={{background:'#1e293b',color:'#818cf8',border:'1px solid #334155',borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>⚙️ Admin</button>
+          <button onClick={fbSignOut} style={{background:'#1e293b',color:'#94a3b8',border:'1px solid #334155',borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>Salir</button>
           {data&&<>
             <button onClick={loadAll} disabled={loading} style={{background:'#1e293b',color:'#00d4aa',border:'1px solid #00d4aa44',borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:'pointer',fontFamily:'monospace'}}>{loading?'⏳':'↺ Refresh'}</button>
             <button onClick={()=>refreshFiat(safes)} disabled={fiatLoading} style={{background:fiatLoading?'#0f172a':fiatSource==='sheet'?'#00d4aa18':'#fb923c18',color:fiatLoading?'#475569':fiatSource==='sheet'?'#00d4aa':'#fb923c',border:'1px solid '+(fiatSource==='sheet'?'#00d4aa44':'#fb923c44'),borderRadius:7,padding:'6px 14px',fontSize:'0.82em',fontWeight:600,cursor:fiatLoading?'default':'pointer',fontFamily:'monospace'}}>{fiatLoading?'⟳ Fiat...':'📊 Fiat Sheet'}</button>
