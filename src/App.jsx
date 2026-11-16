@@ -16,7 +16,7 @@ const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.f
 // ─── FIREBASE AUTH ───
 // La Web API Key de Firebase es pública por diseño (no es un secreto): identifica el proyecto.
 // Dónde está: Firebase → ⚙ Configuración del proyecto → General → "Clave de API web".
-const FIREBASE_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImVjZGNjZDhiLTVmYjAtNDExMC1iZWUxLTY2ZGNhODQwZjE2MyIsIm9yZ0lkIjoiNDc4Njc3IiwidXNlcklkIjoiNDkyNDY4IiwidHlwZUlkIjoiZmQ5Zjk4ZTUtZTc1Yy00Mjk0LWJkZjYtMmZiZTg0NjgzZmZiIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3Njk4NjYwMTIsImV4cCI6NDkyNTYyNjAxMn0.StuCFBwn4_Wv32m2FeuCeuMzJPVVWlewCwE2VxnMzto';
+const FIREBASE_API_KEY = 'PEGA_AQUI_LA_WEB_API_KEY';
 // Solo estos usuarios ven el panel Admin (la seguridad real la aplican las reglas de Firebase).
 const ADMIN_EMAILS = ['finanzas@reental.co'];
 const SESSION_KEY = 'rc_fb_session';
