@@ -19,6 +19,9 @@ jobs:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
           APP_URL: ${{ secrets.APP_URL }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_EMAIL: ${{ secrets.FIREBASE_EMAIL }}
+          FIREBASE_PASSWORD: ${{ secrets.FIREBASE_PASSWORD }}
         run: |
           node << 'EOF'
           const https = require('https');
@@ -34,12 +37,42 @@ jobs:
           // ── Firebase (sustituye JSONbin) ──
           const FIREBASE_URL = 'https://reental-raised-capital-default-rtdb.europe-west1.firebasedatabase.app';
 
+          // ── Acceso a Firebase con usuario propio del informe (la base de datos ya no es pública) ──
+          let FB_TOKEN = null;
+          async function firebaseToken() {
+            if (FB_TOKEN) return FB_TOKEN;
+            const { FIREBASE_API_KEY, FIREBASE_EMAIL, FIREBASE_PASSWORD } = process.env;
+            if (!FIREBASE_API_KEY || !FIREBASE_EMAIL || !FIREBASE_PASSWORD) {
+              throw new Error('Faltan los secrets FIREBASE_API_KEY, FIREBASE_EMAIL o FIREBASE_PASSWORD en GitHub');
+            }
+            const body = JSON.stringify({ email: FIREBASE_EMAIL, password: FIREBASE_PASSWORD, returnSecureToken: true });
+            const r = await fetchJson(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+              body,
+            });
+            if (!r || !r.idToken) {
+              throw new Error('No se pudo iniciar sesión en Firebase: ' + JSON.stringify(r && r.error ? r.error.message : r).slice(0, 200));
+            }
+            FB_TOKEN = r.idToken;
+            return FB_TOKEN;
+          }
+          // Lee/escribe en Firebase y LANZA error si Firebase responde "Permission denied" (nunca devuelve el error como si fueran datos)
+          async function firebaseJson(path, options = {}) {
+            const token = await firebaseToken();
+            const data = await fetchJson(`${FIREBASE_URL}/${path}.json?auth=${encodeURIComponent(token)}`, options);
+            if (data && typeof data === 'object' && !Array.isArray(data) && typeof data.error === 'string') {
+              throw new Error(`Firebase /${path}: ${data.error}`);
+            }
+            return data;
+          }
+
             async function loadSafes() {
               // Sin fallback silencioso: si no hay lista fiable de safes, NO se envía el informe.
               let lastErr = 'sin respuesta';
               for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                  const data = await fetchJson(`${FIREBASE_URL}/safes.json`);
+                  const data = await firebaseJson('safes');
                   // Firebase puede devolver un array o un objeto con claves numéricas
                   const list = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : []);
                   const safes = list.filter(s => s && s.address && s.name);
@@ -57,7 +90,7 @@ jobs:
 
           async function loadBudget() {
             try {
-              const data = await fetchJson(`${FIREBASE_URL}/budget2026.json`);
+              const data = await firebaseJson('budget2026');
               if (Array.isArray(data) && data.length === 12) return data;
             } catch(e) { console.error('Firebase budget error:', e.message); }
             return BUDGET_2026_DEFAULT;
@@ -324,7 +357,7 @@ jobs:
             const totalCapital = totalFiatUsd + totalCripto;
 
             // ── Control de calidad: NO enviar cifras incompletas ──
-            const prev = await fetchJson(`${FIREBASE_URL}/lastReport.json`);
+            const prev = await firebaseJson('lastReport');
             const problems = [];
             if (!(totalCapital > 0)) problems.push('Capital total = 0');
             if (prev && typeof prev === 'object' && prev.total > 0) {
@@ -558,7 +591,7 @@ jobs:
 
             // Guardar referencia para el control de calidad del informe siguiente
             const refBody = JSON.stringify({ total: totalCapital, safes: SAFES.length, date: new Date().toISOString() });
-            await fetchJson(`${FIREBASE_URL}/lastReport.json`, {
+            await firebaseJson('lastReport', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(refBody) },
               body: refBody,
